@@ -14,7 +14,7 @@
 EMACS=emacs
 
 # Where local software is found
-prefix=/usr/local
+prefix=/cvar/sabeti-dav/ilya/sweep2ilya/bkp/fromscr1/ilya/usr3
 
 # Where local lisp files go
 lispdir   = $(prefix)/share/emacs/site-lisp
