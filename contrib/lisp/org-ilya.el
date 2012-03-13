@@ -231,6 +231,10 @@ and list them in reverse chronological order.  If you use timestamps to indicate
   (interactive)
   (message "%s" (org-entry-properties)))
 
+(defun org-ilya-one-prop ()
+  (interactive)
+  (message "%s" (org-entry-get nil "PRIORITY" (not 'inherit))))
+
 
 (defadvice org-scan-tags (around print-args-and-results first
 				 (action matcher &optional todo-only start-level)
@@ -241,3 +245,6 @@ and list them in reverse chronological order.  If you use timestamps to indicate
     (message "returning from org-scan-tags: result=%S" result)
 	     
     result))
+
+(ad-disable-advice 'org-scan-tags 'around 'print-args-and-results)
+(ad-activate 'org-scan-tags)
