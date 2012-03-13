@@ -362,6 +362,28 @@ Load all test files first."
     (org-test-load)
     (ert-run-tests-batch-and-exit "\\(org\\|ob\\)")))
 
+(defun org-test-touch-all-examples2 ()
+  (let ((file "examples/org-matcher.org"))
+    (unless (get-file-buffer file)
+      (add-to-list 'org-test-buffers (find-file file)))))
+
+
+(defun org-test-run-batch-tests2 ()
+  "Run all defined tests matching \"\\(org\\|ob\\)\".
+Load all test files first."
+  (interactive)
+  (let ((org-id-track-globally t)
+	(org-id-locations-file
+	 (convert-standard-filename
+	  (expand-file-name
+	   "testing/.test-org-id-locations"
+	   org-base-dir))))
+    (org-test-touch-all-examples)
+;    (org-test-update-id-locations)
+    (load-file "../lisp/test-org-matcher.el")
+    (ert-run-tests-batch-and-exit "\\(test-org-matcher/org-map-1\\)")))
+
+
 (defun org-test-run-all-tests ()
   "Run all defined tests matching \"\\(org\\|ob\\)\".
 Load all test files first."

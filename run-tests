@@ -1,0 +1,1 @@
+emacs -Q --batch -L /cvar/selection/sweep2/nsvn/Tools/emacs  -L lisp -L testing -L testing/lisp  -L contrib/lisp -l lisp/org.el -l lisp/org-id.el -l testing/org-test.el --eval "(progn (org-reload) (setq org-confirm-babel-evaluate nil))" -f org-test-run-batch-tests 

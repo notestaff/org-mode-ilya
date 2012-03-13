@@ -1,0 +1,28 @@
+#+TITLE: Example file for org matcher
+#+OPTIONS: num:nil ^:nil
+#+STARTUP: hideblocks
+
+This is an example file for use by the Org-mode tests.
+
+* top
+** code block							       :atag:
+   :PROPERTIES:
+   :tangle:   yes
+   :END:
+Here are a couple of code blocks.
+
+#+begin_src emacs-lisp :tangle no
+  (message "I am code")
+#+end_src
+* basic matching
+ :PROPERTIES:
+ :ID:       04df95e7-1ac4-46f9-b710-7808e2b8cb4b
+ :END:
+
+#+begin_src emacs-lisp :results silent
+  (mapcar
+   (lambda (heading)
+     (set-text-properties 0 (length heading) nil heading)
+     heading)
+   (org-map-entries (lambda () (org-get-heading 'no-tags)) "-atag"))
+#+end_src
