@@ -14,8 +14,9 @@
 (ert-deftest test-org-matcher/org-map-1 ()
   "Ensure properties accumulate in subtree drawers."
   (org-test-in-example-file "org-matcher.org"
-    (let ((tests '(("-atag" ("top" "basic matching"))
-		   ("+atag" ("code block")))))
+    (let ((tests '(("-atag" ("top" "entry A" "basic matching"))
+		   ("+atag" ("code block"))
+		   ("a>5" ("entry A")))))
       (mapc
        (lambda (a-test)
 	 (should

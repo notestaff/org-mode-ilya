@@ -14,6 +14,12 @@ Here are a couple of code blocks.
 #+begin_src emacs-lisp :tangle no
   (message "I am code")
 #+end_src
+
+* entry A
+  :PROPERTIES:
+  :a:        10
+  :END:
+
 * basic matching
  :PROPERTIES:
  :ID:       04df95e7-1ac4-46f9-b710-7808e2b8cb4b
