@@ -230,3 +230,14 @@ and list them in reverse chronological order.  If you use timestamps to indicate
 (defun org-ilya-show-props ()
   (interactive)
   (message "%s" (org-entry-properties)))
+
+
+(defadvice org-scan-tags (around print-args-and-results first
+				 (action matcher &optional todo-only start-level)
+				 activate)
+  (message "entering org-scan-tags: action=%s matcher=%s todo-only=%s start-level=%s"
+	   action matcher todo-only start-level)
+  (let ((result ad-do-it))
+    (message "returning from org-scan-tags: result=%S" result)
+	     
+    result))
