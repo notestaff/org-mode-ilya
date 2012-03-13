@@ -78,6 +78,20 @@ We gather separately constraints on various parts of an entry.
 ;;   - 
 
 
+(defun org-fastmatch-make-regexp-for-date-range (float-time-min float-time-max)
+  "Construct a regexp that will definitely match every date string between FLOAT-TIME-MIN and FLOAT-TIME-MAX.
+"
+  (regexp-opt
+   (let ((cur-time float-time-min)
+	 (fmt (substring (org-time-stamp-format) 1 9))
+	 day-strings)
+     (while (< cur-time float-time-max)
+       (push (format-time-string fmt (seconds-to-time cur-time))
+	     day-strings)
+       (incf cur-time 86400))
+     day-strings) 'paren))
+
+
 
 (defun org-fastmatch-make-tags-matcher-filter (match)
   "For a given TAGS/TODO matcher defined by MATCH,
