@@ -32,21 +32,58 @@
 ;; the intent is that nothing should be altered in the operation of these
 ;; routines except for speed.
 
+(eval-when-compile
+  (require 'cl))
+
+(defstruct org-fastmatch-term
+  "Parsed version of one matcher term.
+We gather separately constraints on various parts of an entry.
+"
+  level
+  todo
+  priority
+  tags
+
+  scheduled
+  deadline
+
+  timestamp
+  timestamp_ia
+  )
+
+;; so, about the todo matcher:
+;; the todo keywords are definitely all known.
+;; so, we can just create a regexp.
+;; if restricted to todo-keywords (and we also have this as an arg to org-scan-tags),
+;; just require one of the keywords (or possibly non-done ones) at the appropriate point.
+;; so then, we don't need to factor-multiply things out.
+;; we can just process each term.
+;; for each term, we get an expression, and then we or them.
+;; if for any term the expression is "any", can short-circuit things and just say, any.
+;; can use throw/catch for this.
+
+;; so, for one term:
+;;   - for each part of the headline, we can accumulate the constraints separately
+;;   - for each inherited tag mentioned, we add an OR for just that tag
+
+;;       --> whenever we exit a level where a prop or a tag was set, need to remove that.
+;;           so, if we set an inherited prop or tag, then need to:
+;;                -- find the corresponding exit level, and when searching forward,
+;;                   give that as the limit.  keep a stack of these.
+
+;;       --> be careful if a skip-function was specified.
+
+;;   - check what happens for ALLTAGS
+;;   - for each inherited property mentioned, including CATEGORY, we add an OR for just that prop.
+;;   - 
+
+
+
 (defun org-fastmatch-make-tags-matcher-filter (match)
   "For a given TAGS/TODO matcher defined by MATCH,
 construct a regexp that will match only necessary
 entries.
 "
-  ;; todo-only is scoped dynamically into this function, and the function
-  ;; may change it if the matcher asks for it.
-  (unless match
-    ;; Get a new match request, with completion
-    (let ((org-last-tags-completion-table
-	   (org-global-tags-completion-table)))
-      (setq match (org-completing-read-no-i
-		   "Match: " 'org-tags-completion-function nil nil nil
-		   'org-tags-history))))
-
   ;; Parse the string and create a lisp form
   (let ((match0 match)
 	(re (org-re "^&?\\([-+:]\\)?\\({[^}]+}\\|LEVEL\\([<=>]\\{1,2\\}\\)\\([0-9]+\\)\\|\\(\\(?:[[:alnum:]_]+\\(?:\\\\-\\)*\\)+\\)\\([<>=]\\{1,2\\}\\)\\({[^}]+}\\|\"[^\"]*\"\\|-?[.0-9]+\\(?:[eE][-+]?[0-9]+\\)?\\)\\|[[:alnum:]_@#%]+\\)"))
@@ -188,6 +225,163 @@ entries.
 		    tagsmatcher))
     (cons match0 matcher)))
 
+(defun org-fastmatch-scan-tags (action matcher &optional todo-only start-level)
+  "Scan headline tags with inheritance and produce output ACTION.
+
+ACTION can be `sparse-tree' to produce a sparse tree in the current buffer,
+or `agenda' to produce an entry list for an agenda view.  It can also be
+a Lisp form or a function that should be called at each matched headline, in
+this case the return value is a list of all return values from these calls.
+
+MATCHER is a Lisp form to be evaluated, testing if a given set of tags
+qualifies a headline for inclusion.  When TODO-ONLY is non-nil,
+only lines with a TODO keyword are included in the output.
+
+START-LEVEL can be a string with asterisks, reducing the scope to
+headlines matching this string."
+  (require 'org-agenda)
+  (let* ((re (concat "^"
+		     (if start-level
+			 ;; Get the correct level to match
+			 (concat "\\*\\{" (number-to-string start-level) "\\} ")
+		       org-outline-regexp)
+		     " *\\(\\<\\("
+		     (mapconcat 'regexp-quote org-todo-keywords-1 "\\|")
+		     (org-re
+		      "\\>\\)\\)? *\\(.*?\\)\\(:[[:alnum:]_@#%:]+:\\)?[ \t]*$")))
+	 (props (list 'face 'default
+		      'done-face 'org-agenda-done
+		      'undone-face 'default
+		      'mouse-face 'highlight
+		      'org-not-done-regexp org-not-done-regexp
+		      'org-todo-regexp org-todo-regexp
+		      'org-complex-heading-regexp org-complex-heading-regexp
+		      'help-echo
+		      (format "mouse-2 or RET jump to org file %s"
+			      (abbreviate-file-name
+			       (or (buffer-file-name (buffer-base-buffer))
+				   (buffer-name (buffer-base-buffer)))))))
+	 (case-fold-search nil)
+	 (org-map-continue-from nil)
+         lspos tags
+	 (tags-alist (list (cons 0 org-file-tags)))
+	 (llast 0) rtn rtn1 level category i txt
+	 todo marker entry priority)
+    (when (not (or (member action '(agenda sparse-tree)) (functionp action)))
+      (setq action (list 'lambda nil action)))
+    (save-excursion
+      (goto-char (point-min))
+      (when (eq action 'sparse-tree)
+	(org-overview)
+	(org-remove-occur-highlights))
+      (while (re-search-forward re nil t)
+	(setq org-map-continue-from nil)
+	(catch :skip
+	  (setq todo (if (match-end 1) (org-match-string-no-properties 2))
+		tags (if (match-end 4) (org-match-string-no-properties 4)))
+	  (goto-char (setq lspos (match-beginning 0)))
+	  (setq level (org-reduced-level (funcall outline-level))
+		category (org-get-category))
+	  (setq i llast llast level)
+	  ;; remove tag lists from same and sublevels
+	  (while (>= i level)
+	    (when (setq entry (assoc i tags-alist))
+	      (setq tags-alist (delete entry tags-alist)))
+	    (setq i (1- i)))
+	  ;; add the next tags
+	  (when tags
+	    (setq tags (org-split-string tags ":")
+		  tags-alist
+		  (cons (cons level tags) tags-alist)))
+	  ;; compile tags for current headline
+	  (setq tags-list
+		(if org-use-tag-inheritance
+		    (apply 'append (mapcar 'cdr (reverse tags-alist)))
+		  tags)
+		org-scanner-tags tags-list)
+	  (when org-use-tag-inheritance
+	    (setcdr (car tags-alist)
+		    (mapcar (lambda (x)
+			      (setq x (copy-sequence x))
+			      (org-add-prop-inherited x))
+			    (cdar tags-alist))))
+	  (when (and tags org-use-tag-inheritance
+		     (or (not (eq t org-use-tag-inheritance))
+			 org-tags-exclude-from-inheritance))
+	    ;; selective inheritance, remove uninherited ones
+	    (setcdr (car tags-alist)
+		    (org-remove-uninherited-tags (cdar tags-alist))))
+	  (when (and
+
+		 ;; eval matcher only when the todo condition is OK
+		 (and (or (not todo-only) (member todo org-not-done-keywords))
+		      (let ((case-fold-search t)) (eval matcher)))
+
+		 ;; Call the skipper, but return t if it does not skip,
+		 ;; so that the `and' form continues evaluating
+		 (progn
+		   (unless (eq action 'sparse-tree) (org-agenda-skip))
+		   t)
+
+		 ;; Check if timestamps are deselecting this entry
+		 (or (not todo-only)
+		     (and (member todo org-not-done-keywords)
+			  (or (not org-agenda-tags-todo-honor-ignore-options)
+			      (not (org-agenda-check-for-timestamp-as-reason-to-ignore-todo-item)))))
+
+		 ;; Extra check for the archive tag
+		 ;; FIXME: Does the skipper already do this????
+		 (or
+		  (not (member org-archive-tag tags-list))
+		  ;; we have an archive tag, should we use this anyway?
+		  (or (not org-agenda-skip-archived-trees)
+		      (and (eq action 'agenda) org-agenda-archives-mode))))
+
+	    ;; select this headline
+
+	    (cond
+	     ((eq action 'sparse-tree)
+	      (and org-highlight-sparse-tree-matches
+		   (org-get-heading) (match-end 0)
+		   (org-highlight-new-match
+		    (match-beginning 1) (match-end 1)))
+	      (org-show-context 'tags-tree))
+	     ((eq action 'agenda)
+	      (setq txt (org-agenda-format-item
+			 ""
+			 (concat
+			  (if (eq org-tags-match-list-sublevels 'indented)
+			      (make-string (1- level) ?.) "")
+			  (org-get-heading))
+			 category
+			 tags-list)
+		    priority (org-get-priority txt))
+	      (goto-char lspos)
+	      (setq marker (org-agenda-new-marker))
+	      (org-add-props txt props
+		'org-marker marker 'org-hd-marker marker 'org-category category
+		'todo-state todo
+		'priority priority 'type "tagsmatch")
+	      (push txt rtn))
+	     ((functionp action)
+	      (setq org-map-continue-from nil)
+	      (save-excursion
+		(setq rtn1 (funcall action))
+		(push rtn1 rtn)))
+	     (t (error "Invalid action")))
+
+	    ;; if we are to skip sublevels, jump to end of subtree
+	    (unless org-tags-match-list-sublevels
+	      (org-end-of-subtree t)
+	      (backward-char 1))))
+	;; Get the correct position from where to continue
+	(if org-map-continue-from
+	    (goto-char org-map-continue-from)
+	  (and (= (point) lspos) (end-of-line 1)))))
+    (when (and (eq action 'sparse-tree)
+	       (not org-sparse-tree-open-archived-trees))
+      (org-hide-archived-subtrees (point-min) (point-max)))
+    (nreverse rtn)))
 
   
 
