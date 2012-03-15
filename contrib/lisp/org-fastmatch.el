@@ -34,22 +34,23 @@
 
 (eval-when-compile
   (require 'cl))
+(require 'org)
+(require 'org-agenda)
 
 (defstruct org-fastmatch-term
   "Parsed version of one matcher term.
 We gather separately constraints on various parts of an entry.
 "
-  level
-  todo
-  priority
-  tags
+  required-heritable-tags  ; can be regexps
 
-  scheduled
-  deadline
+  ; also keep status here.  or, say the above is a vector,
+  ;; org-scan-tags can keep its own state -- probably better parallelism.
 
-  timestamp
-  timestamp_ia
+  ;; the regexp for this term
+  regexp
   )
+
+
 
 ;; so, about the todo matcher:
 ;; the todo keywords are definitely all known.
@@ -91,12 +92,44 @@ We gather separately constraints on various parts of an entry.
        (incf cur-time 86400))
      day-strings) 'paren))
 
+(defun org-ilya-recent ()
+  "Show recent items"
+  (interactive)
+  (org-occur
+   (org-fastmatch-make-regexp-for-date-range
+    (org-matcher-time "<-4w>")
+    (org-matcher-time "<+1w>"))))
 
+(defun org-fastmatch-negate-if (should-negate val)
+  "Negate a value or not, based on a flag"
+  (if should-negate (not val) val))
 
-(defun org-fastmatch-make-tags-matcher-filter (match)
+(defun org-fastmatch-canonicalize-op (op)
+  "Canonicalize a string op"
+  (or (assoc-default
+       op
+       '(("=>" . ">=")
+	 ("=<" . "<=")
+	 ("=" . "==")
+	 ("<>" . "!=")))
+      op))
+
+(defun org-fastmatch-negate-op (op)
+  "Negate a canonicalized op."
+  (assoc-default '((">=" . "<")
+		   ("<=" . ">")
+		   (">" . "<=")
+		   ("<" . ">=")
+		   ("==" . "!=")
+		   ("!=" . "=="))))
+
+(defun org-fastmatch-make-tags-matcher-filter (match only-not-done-todos start-level)
   "For a given TAGS/TODO matcher defined by MATCH,
-construct a regexp that will match only necessary
-entries.
+construct a regexp that will match within the next entry at which `org-fastmatch-scan-tags'
+must stop.  Any entry before the match, can be safely skipped as if it was not present
+in the orgfile, without affecting the match results.
+
+
 "
   ;; Parse the string and create a lisp form
   (let ((match0 match)
@@ -106,7 +139,13 @@ entries.
 	orterms term orlist re-p str-p level-p level-op time-p
 	prop-p pn pv po gv rest
 	tags-min-regexp
+	(all-todos (if only-not-done-todos
+		       org-not-done-keywords
+		     (cons "" org-todo-keywords-1)))
+	
+	todo-matcher-ok-todos
 	)
+    ;; Split match string into tags/properties matcher and todo matcher
     (if (string-match "/+" match)
 	;; match contains also a todo-matching request
 	(progn
@@ -119,44 +158,284 @@ entries.
       ;; only matching tags
       (setq tagsmatch match todomatch nil))
 
+    ;; Make a list of todos acceptable to the todo matcher
+    (if (or (not todomatch) (not (string-match "\\S-" todomatch)))
+	(setq todo-matcher-ok-todos all-todos)
+      
+      (setq orterms (org-split-string todomatch "|"))
+      (while (setq term (pop orterms))
+	;; Compute the list of todos accepted by this or-term
+	(let ((or-term-ok-todos (copy-sequence all-todos))) 
+	  (while (string-match re term)
+	    (setq minus (and (match-end 1)
+			     (equal (match-string 1 term) "-"))
+		  kwd (match-string 2 term)
+		  re-p (equal (string-to-char kwd) ?{)
+		  term (substring term (match-end 0)))
+	    ;; Remove any TODOs not accepted by this and-term
+	    (setq or-term-ok-todos
+		  (org-remove-if-not
+		     (lambda (todo)
+		       (let ((matches-p
+			      (if re-p
+				  (string-match  (substring kwd 1 -1) todo)
+				(equal todo kwd))))
+			 (if minus (not matches-p) matches-p)))
+		     or-term-ok-todos)))
+	  (dolist (todo or-term-ok-todos)
+	    (unless (member todo todo-matcher-ok-todos)
+	      (push todo org-matcher-ok-todos))))
+
+	;;
+	;; if org-agenda-skip-function-global or org-agenda-skip-function is
+	;; (org-agenda-skip-entry-if todo ) or nottodo, further restrict org-matcher-ok-todos.
+	;;
+
     ;; Make the tags matcher
-    (if (or (not tagsmatch) (not (string-match "\\S-" tagsmatch)))
+
+	  ;; so, for the tags:
+	  ;;   - if an inherited tag is mentioned in any term, that tag by itself
+	  ;;     becomes an or of the regexp.  (and is removed from the regexp for that term)
+
+	  ;;   - for each and term we make one regexp, and make an or of them, plus any standalone tags as mentioned above.
+	  ;;      - so, for an or term:
+	  ;;         - we keep and accumulate lists of constraints for the various parts of an entry:
+	  ;;             level, priority (if priority not inherited), todo (limited by todo matcher), tags (except inherited ones),
+	  ;;             scheduled, deadline, timestamp, timestamp_ia, closed.
+	  ;;             properties.
+	  ;;           within each list we try to group constraints into one regexp, e.g.
+	  ;;           priority range, level range, date range.
+
+	  ;;         - then, we combine all these into one regexp
+	  ;;             - if things may be in any order, use a repeat, but with a minimum number of repeats.
+
+	  ;;  -- require archive tag to be minus, based on options.
+	  ;;     only useful if all possible tags are known.
+
+	  ;;  -- if clocksum, forget it, no regexp for that
+	  ;;  -- BLOCKED, check
+
+	  ;; ** if ALLTAGS is given, then what?
+	  ;;     -- if we know all possible inherited tags, make sure to stop for each one individually.
+	  ;;        now, wait.  how is this property returned?
+	  ;;
+	  ;;     so, if ALLTAGS is given, and we don't know the full list of tags, then just stop
+	  ;;     at any tag.  otherwise, how do you trust scanner tags?
+
+	  ;;    -->
+
+	  ;; ** wait.  what if this is used for mapping.
+	  ;;    so, if we're just searching for a condition, then skipping tags is ok.
+	  ;;    but if we're mapping a user-defined function --
+
+	  ;;; so, how about: if we know all tags, or we know there are no inherited tags,
+	  ;;    then do the above.
+	  
+	  ;;  otherwise, can just say, stop at any tag, period.
+	  ;;  this still lets us skip non-tagged entries;  and, if the user specifies the full set of tags,
+	  ;;; or limits inheritance to known ones, then we can stop at just those.
+
+
+	  ;;
+	  ;; so, advise org-map-entries to set a var, so that if we're doing org-scan-tags for that,
+	  ;; we either try to make sure the scanner-tags are accurate for all tags,
+	  ;; or else don't use org-scanner-tags.
+	  ;
+	  ;; but document a way for functions to tell us the tags they care about.
+	  ;; but in the simplest, initial, case, can just stop either at all tags or at
+	  ;; all inherited tags if these are known.
+
+	  ;; (but no, let's only do that in the above case).
+
+	  ;; what about the skipper function, can it ask for scanner-tags?
+	  ;;
+
+	  ;;   --> you can wrap the user's function in your own,
+	  ;;    so that if it calls to get properties or tags, you will know.
+
+	  ;; for non-inherited properties, we can require the property to be defined (unless the value nil is ok)
+	  ;; if the restriction is to a given value or given regexp, we can include those.
+	  ;; otherwise, only if the _all is given for the property.  (and even then, be careful as this can change
+	  ;; during the search.  can say, if you want speed, make an re yourself.)
+	  
+	  ;; for tags, we only include non-inherited tags.
+	  ;; if a tag is positively selected, including by re, we include it.
+	  ;; any other tag constraints -- if we have the full list of tags, can make a regexp, otherwise no.
+
+	  ;; for testing, can double-check that any entry this would have skipped,
+	  ;; we don't care about.
+
+	  ;;   - don't forget, in org-scan-tags, to unset inherited tags.
+	  ;;   - we can make a global list of all properties we care about, and only get those.
+	  ;;
+
+
+	  ;; so, if a timestamp is needed and may be in the entry,
+	  ;; then we can't require it to be after.
+	  ;;
+	  ;;
+	  ;; but, if we drop the tags requirement, then all is well.
+
+	  ;; we _could_ make the tags constraint just one of several here;
+	  ;; since the tags are at the end of the line, they're unlikely to be matched by others anyway.
+
+	  ;; so, if there is one date and some tags, can make two cases, one with date before one with after.
+
+	  ;; so ok, so, it's not too bad -- the tags can be at one of few positions relative to this.
+	  ;; so, can make an OR for each of these positions.
+	  
+
+	  ;; the code needs to be clear or it won't be put into the core.
+
+
+	  ;; so, for each possible position of the dates vs the tags.
+	  ;; say, no dates on the headline.
+	  ;; we can match, ( (zero-or-more non-headline lines, non-greedy) ( non-headline line with date ) .
+	  ;; ah, but there might be more than one date on a line.
+
+	  ;; so, for speed can have an option where we assume no dates on the headline, and/or no more than
+	  ;; one date per line.
+	  ;; but without it -- we should just choose the strongest constraint and stick with it.
+	  ;; e.g. a strong date constraint, together with a todo constraint.
+
+	  ;;    --> but, how can we have a date constraint at all, without matching a date way downstream?
+	  ;; let's say we _just_ want to match a date.
+	  ;; so, the question is only about how we make an AND of a date and a headline constraint.
+	  ;; for one date, we can say that it is either on the headline,
+	  ;; or, we match the headline constraint followed by zero-or-more non-heading or empty lines,
+	  ;; followed by the line with the constraint.
+	  ;; so, basically, in a regexp for the term, besides constraints on the headline,
+	  ;; we can add _one_ constraint on a property or a date.
+
+	  ;;    --> on the other hand, should allow ITEMBODY and ITEMHEADLINE matches for a regexp?
+
+	  ;; for an inherited prop, if it is undef and the value is required, the point is we shouldn't stop at any place
+	  ;; until we get a value... except the places needed to keep the tags.
+
+	  ;; another option is, when searching forward, to search twice.
+	  ;; you can ask, when is the next instance of this element?
+
+
+	
+	(let (term-infos all-buffer-tags)
+	  (flet ((get-all-buffer-tags
+		  ()
+		  (or all-buffer-tags
+		      (setq all-buffer-tags
+			    (or org-tag-alist (org-get-buffer-tags))))))
+	    
+
+	  (if (or (not tagsmatch) (not (string-match "\\S-" tagsmatch)))
+	      (set min-regexp-or-terms
+		   (when (or only-not-done-todos
+			     (not (equal todo-matcher-ok-todos all-todos)))
+		     ;; prepend levell constraint
+		     ;; or pretend there is one term without any constraints.
+		     (regexp-opt org-matcher-ok-todos 'words)))
+	    )
+	  
 	(setq tagsmatcher t)
       (setq orterms (org-split-string tagsmatch "|") orlist nil)
       (while (setq term (pop orterms))
 	(while (and (equal (substring term -1) "\\") orterms)
 	  (setq term (concat term "|" (pop orterms)))) ; repair bad split
-	(while (string-match re term)
-	  (setq rest (substring term (match-end 0))
-		minus (and (match-end 1)
-			   (equal (match-string 1 term) "-"))
-		tag (save-match-data (replace-regexp-in-string
-				      "\\\\-" "-"
-				      (match-string 2 term)))
-		re-p (equal (string-to-char tag) ?{)
-		level-p (match-end 4)
-		prop-p (match-end 5)
-		mm (cond
-		    (re-p
-		     (cons
-		      `(org-match-any-p ,(substring tag 1 -1) tags-list)
-		      ;; if overall list of tags is known, then can get the set of tags
-		      ;; matching this, and then compute the regexp for the relevant tags.
-		      ;; if a tag isn't inherited, and this term requires that tag then search for the tag.
-		      ;; more generally, if list of possible tags is known, can make a regexp for the tags,
-		      ;; and then only also stop separately at inherited tags or inherited props.
-		      (if minus ''
-			  (concat "^\\*+.*:\\(?:" (substring tag 1 -1) "\\):"
-		      ))))
-		    (level-p
-		     (setq level-op (org-op-to-function (match-string 3 term)))
-		     (cons `(,level-op level ,(string-to-number
-					       (match-string 4 term)))
-			   ;; the right number of stars, depending on the operator
-			   ;; and on the odd-levels-only setting.
-			   ''
-			   ))
+	
+	;; For each part of an entry, gather constraints from this or-term
+	;; on that part of the entry.
+	;; Then, we'll create a regexp for each entry part matching on these constraints.
+	(let ((level-min (or start-level 0))
+	      (level-max 10000)
+	      ok-todos (copy-sequence todo-matcher-ok-todos)
+	      ok-priorities   ;; if priority is heritable, don't make a regexp for it
+	      ok-tags (copy-sequence all-buffer-tags)
+	      timestamp-min timetamp-max
+	      timestamp_ia-min timestamp_ia-max
+	      deadline-min deadline-max
+	      scheduled-min scheduled-max
+	      closed-min closed-max
+	      
+		;; be sure to check the minus!
+		
+		;; a list of property constraints (regexps)
+		standard-prop-constraints
+		;;
+		)
+	    )
+	  
+	  (while (string-match re term)
+	    (setq
+	     rest (substring term (match-end 0))
+	     minus (and (match-end 1)
+			(equal (match-string 1 term) "-"))
+	     tag (save-match-data (replace-regexp-in-string
+				   "\\\\-" "-"
+				   (match-string 2 term)))
+	     re-p (equal (string-to-char tag) ?{)
+	     level-p (match-end 4)
+	     prop-p (match-end 5)
+	    
+	     
+	     mm (cond
+		 (re-p
+		  ;; so, we can build the list of all tags that are ok here.
+		     ;; now, how do we make a stopping criterion for inherited tags?
+		     ;; so, each term can require a set of tags or exclude a set of tags.
+		     ;; if it requires a set of tags, we can add them all to the regexp,
+		     ;; except for the inheritable ones.
+		     ;; if it excludes a set of tags:
+		     ;;   - we can say, "have no tags here or all the others".
+		     ;;   - so, what will the tag regexp look like?  it will say,
+		     ;;     repeat: reguired tag, space.  now that space,
+		     ;;     can be all tags, but if some are excluded, then exclude them.
+		     ;; so, wait.
+
+		     ;; we can again start with all tags,
+		     ;; and 
+
+		     ;; if a tag is excluded, we're already skipping the subtree.
+
+		     ;; so, what if we say, the tags regexp is just, ok-tag, repeat, ok-tag;
+		     ;; and, at least the number of non-inherited required tags.
+
+		     ;; so then, we just need:
+
+		  (setq ok-tags
+			(org-remove-if-not
+			 (lambda (a-tag)
+			   (org-fastmatch-negate-if
+			    minus
+			    (string-match (substring tag 1 -1) a-tag)))
+			 ok-tags)))
+		  
+		 (level-p
+		  (let ((level-op (org-fastmatch-canonicalize-op (match-string 3 term)))
+			(level-val (string-to-number
+				    (match-string 4 term))))
+		    (if (not minus)
+			(case (intern level-op)
+			  ('> (setq level-min (max level-min (1+ level-val))))
+			  ('>= (setq level-min (max-level-min level-val)))
+			  ('< (setq level-max (min level-max (1- level-val))))
+			  ('<= (setq level-max (min level-max level-val)))
+			  ('== (setq level-min level-val level-max level-val)))
+		      (case (intern level-op)
+			('> (setq level-max (min level-max level-val)))
+			('>= (setq level-max (min level-max (1- level))))
+			('< (setq level-min (max level-min level-val)))
+			('<= (setq level-min (max level-min (1+ level-val))))
+			('!= (setq level-min level-val level-max level-val)))
+		      )))
+			
 		    (prop-p
+
+		     ;; check if it's one of the special props,
+		     ;; esp alltags
+
+		     ;; check priority
+
+		     ;; possibly, check for props with _ALL values.
+		     ;;  though there the user can probably just write a regexp themselves.
+		     
 		     (setq pn (match-string 5 term)
 			   po (match-string 6 term)
 			   pv (match-string 7 term)
@@ -167,6 +446,26 @@ entries.
 			   pv (if (or re-p str-p) (substring pv 1 -1) pv))
 		     (if time-p (setq pv (org-matcher-time pv)))
 		     (setq po (org-op-to-function po (if time-p 'time str-p)))
+
+		     (cond
+		      ((equal pn "TODO")
+		       ;; restrict list of ok todos for this term.
+		       (setq ok-todos
+			     (remove-if-not
+			      (lambda (a-todo)
+				(org-fastmatch-negate-if
+				 minus
+				 (org-fastmatch-negate-if
+				  (eq po 'org<>)
+				  (save-match-data
+				    (string-match pv a-todo))))))))
+		      
+		      ;; check about alltags!!
+		      ;; just make a note of whether this is used at all?
+		      ;; or can just grep the string for it.
+							 
+		       )
+		     
 		     (cond
 		      ((equal pn "CATEGORY")
 		       (setq gv '(get-text-property (point) 'org-category)))
@@ -209,36 +508,37 @@ entries.
       (setq tagsmatcher (if (> (length orlist) 1) (cons 'or orlist) (car orlist)))
       (setq tagsmatcher
 	    (list 'progn '(setq org-cached-props nil) tagsmatcher)))
-    ;; Make the todo matcher
-    (if (or (not todomatch) (not (string-match "\\S-" todomatch)))
-	(setq todomatcher t)
-      (setq orterms (org-split-string todomatch "|") orlist nil)
-      (while (setq term (pop orterms))
-	(while (string-match re term)
-	  (setq minus (and (match-end 1)
-			   (equal (match-string 1 term) "-"))
-		kwd (match-string 2 term)
-		re-p (equal (string-to-char kwd) ?{)
-		term (substring term (match-end 0))
-		mm (if re-p
-		       `(string-match  ,(substring kwd 1 -1) todo)
-		     (list 'equal 'todo kwd))
-		mm (if minus (list 'not mm) mm))
-	  (push mm todomatcher))
-	(push (if (> (length todomatcher) 1)
-		  (cons 'and todomatcher)
-		(car todomatcher))
-	      orlist)
-	(setq todomatcher nil))
-      (setq todomatcher (if (> (length orlist) 1)
-			    (cons 'or orlist) (car orlist))))
-
-    ;; Return the string and lisp forms of the matcher
-    (setq matcher (if todomatcher
-		      (list 'and tagsmatcher todomatcher)
-		    tagsmatcher))
-    (cons match0 matcher)))
-
+      
+      ;; Make the todo matcher
+      (if (or (not todomatch) (not (string-match "\\S-" todomatch)))
+	  (setq todomatcher t)
+	(setq orterms (org-split-string todomatch "|") orlist nil)
+	(while (setq term (pop orterms))
+	  (while (string-match re term)
+	    (setq minus (and (match-end 1)
+			     (equal (match-string 1 term) "-"))
+		  kwd (match-string 2 term)
+		  re-p (equal (string-to-char kwd) ?{)
+		  term (substring term (match-end 0))
+		  mm (if re-p
+			 `(string-match  ,(substring kwd 1 -1) todo)
+		       (list 'equal 'todo kwd))
+		  mm (if minus (list 'not mm) mm))
+	    (push mm todomatcher))
+	  (push (if (> (length todomatcher) 1)
+		    (cons 'and todomatcher)
+		  (car todomatcher))
+		orlist)
+	  (setq todomatcher nil))
+	(setq todomatcher (if (> (length orlist) 1)
+			      (cons 'or orlist) (car orlist))))
+      
+      ;; Return the string and lisp forms of the matcher
+      (setq matcher (if todomatcher
+			(list 'and tagsmatcher todomatcher)
+		      tagsmatcher))
+      (cons match0 matcher)))
+  
 (defun org-fastmatch-scan-tags (action matcher &optional todo-only start-level)
   "Scan headline tags with inheritance and produce output ACTION.
 
@@ -396,7 +696,5 @@ headlines matching this string."
 	       (not org-sparse-tree-open-archived-trees))
       (org-hide-archived-subtrees (point-min) (point-max)))
     (nreverse rtn)))
-
-  
 
 (provide 'org-fastmatch)
