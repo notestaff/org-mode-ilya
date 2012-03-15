@@ -50,6 +50,8 @@ the entry creation date.
   (interactive)
   (org-insert-time-stamp nil t t nil nil nil))
 
+(defun do-sel-disp () (interactive) (setq selective-display t) (message "sel-disp is %s" selective-display))
+
 (defun bh/insert-heading-inactive-timestamp ()
   (save-excursion
     (org-return)
@@ -248,3 +250,19 @@ and list them in reverse chronological order.  If you use timestamps to indicate
 
 (ad-disable-advice 'org-scan-tags 'around 'print-args-and-results)
 (ad-activate 'org-scan-tags)
+
+(defun org-ilya-get-tags ()
+  (interactive)
+  (message "%s" (org-get-buffer-tags)))
+  
+
+
+(defvar testvar 239)
+
+(let ((testvar nil))
+  (makunbound 'testvar)
+  (condition-case err
+      (progn
+	(message "testvar is %s" testvar)
+	)
+    (void-variable (message "tried to read var %s" err))))
