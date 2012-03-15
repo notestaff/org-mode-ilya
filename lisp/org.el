@@ -13019,9 +13019,11 @@ also TODO lines."
       ;; Caching is not possible, check it directly
       (org-entry-get pom property 'inherit)
     ;; Get all properties, so that we can do complicated checks easily
-    (cdr (assoc property (or org-cached-props
-			     (setq org-cached-props
-				   (org-entry-properties pom)))))))
+    (org-entry-get pom property)
+;    (cdr (assoc property (or org-cached-props
+;			     (setq org-cached-props
+;				   (org-entry-properties pom)))))
+    ))
 
 (defun org-global-tags-completion-table (&optional files)
   "Return the list of all tags in all agenda buffer/files.
