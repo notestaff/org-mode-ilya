@@ -211,29 +211,29 @@ in the syntax of `org-matcher-time'."
 ;; and it's good that the names are explicitly put into the module.
 ;; yes, it's a good design.
 
-(def-rxx org-balance priority
+(def-rxx-regexp org-balance priority
   "A priority cookie on an Org headline.   Parsed as the entire cookie (e.g. [#A])."
   (seq "[#" (any upper digit) "]"))
 
-(def-rxx org-balance goal-prefix
+(def-rxx-regexp org-balance goal-prefix
   "The part of a GOAL line up to the goal name: the stars, the GOAL keyword, and optionally the priority. "
   (seq bol (sep-by blanks (seq (1+ "*")) (seq bow (eval org-balance-goal-todo-keyword) eow) priority?) blanks?))
 
-(def-rxx org-balance tag-name "The name of a tag" (1+ (any alnum "_@#%")))
-(def-rxx org-balance tags "The tags at the end of a headline"
+(def-rxx-regexp org-balance tag-name "The name of a tag" (1+ (any alnum "_@#%")))
+(def-rxx-regexp org-balance tags "The tags at the end of a headline"
   (& blanks? (opt ":" (1+ (& tag-name ":")) eol)) tag-name-list)
 
-(def-rxx org-balance matcher "A tags and properties matcher, as described at
+(def-rxx-regexp org-balance matcher "A tags and properties matcher, as described at
 URL 'http://orgmode.org/manual/Matching-tags-and-properties.html#Matching-tags-and-properties'."
   (1+ nonl) org-make-tags-matcher)
 
-(def-rxx org-balance inactive-timestamp
+(def-rxx-regexp org-balance inactive-timestamp
   "An Org-mode inactive timestamp, such as '[2010-09-07 Tue 18:30]'.
 Parsed as a floating-point value of time in seconds."
   (seq "[" (named-grp time (1+ nonl)) "]" )
   (org-float-time (apply 'encode-time (org-parse-time-string time))))
 
-(def-rxx org-balance clock
+(def-rxx-regexp org-balance clock
   "An Org-mode clock line giving a time interval, such as when
 logging work time (see Info node `(org)Clocking work time').
 E.g. '	CLOCK: [2010-09-09 Thu 06:30]--[2010-09-09 Thu 12:46] =>  6:16'.
@@ -245,7 +245,7 @@ Parsed as a cons of the start and end times."
   (cons from to))
 
 
-(def-rxx org-balance closed
+(def-rxx-regexp org-balance closed
   "An Org-mode line indicating when an entry was closed.
 Parsed as the floating-point time."
   (sep-by blanks bol (or (eval org-closed-string) "- State \"DONE\"       from \"NEXT\"      ")
@@ -255,8 +255,8 @@ Parsed as the floating-point time."
   ;; figure out how to customize this in case the user's thing has been customized.
   closed-time)
 
-(def-rxx org-balance prop-name "A valid name of an Org entry property" (& alpha (0+ (any alnum "_-"))))
-(def-rxx org-balance link "An Org link. Parsed as an elu-loc at the target of the link."
+(def-rxx-regexp org-balance prop-name "A valid name of an Org entry property" (& alpha (0+ (any alnum "_-"))))
+(def-rxx-regexp org-balance link "An Org link. Parsed as an elu-loc at the target of the link."
   (named-grp link (eval-regexp (rxx-make-shy org-any-link-re)))
   (elu-save excursion restriction window-excursion match-data
     (goto-char (rxx-match-beginning 'link))
@@ -427,7 +427,7 @@ Fields:
   (elu-with 'org-balance-prop-sum-def psd (prop matcher link)
     (make-org-balance-prop-sum-def :prop prop :matcher matcher :link link)))
 
-(def-rxx org-balance prop-sum-def
+(def-rxx-regexp org-balance prop-sum-def
   "The name of a property to be summed for a subtree within a given time interval,
 optionally followed by a link to the subtree.
 The property can be an Org property name, 'clockedtime' or 'actualtime'.  Parsed as a 
@@ -467,7 +467,7 @@ Fields:
 "
   ratio-def thresh op)
 
-(def-rxx org-balance comparison-op "A comparison operator"
+(def-rxx-regexp org-balance comparison-op "A comparison operator"
   (or ">" "<" ">=" "=>" "<=" "at most" "at least")
   (lambda (s)
     (cond ((equal s "at most") '<=)
@@ -485,7 +485,7 @@ Fields:
 ;; should 
 
 
-(def-rxx org-balance goal
+(def-rxx-regexp org-balance goal
   "A goal, such as 'clockedtime / actualtime : >= 3 hours / week"
   (sep-by blanks?
     (opt (sep-by blanks? (prop-sum-def ratio-def-numer) (opt ratio-word blanks? (prop-sum-def ratio-def-denom)) ":"))
@@ -522,7 +522,7 @@ Fields:
 "
   orig actual-p factor)
 
-(def-rxx org-balance goal-or-relative-goal-headline "A goal expressed directly or in terms of another goal"
+(def-rxx-regexp org-balance goal-or-relative-goal-headline "A goal expressed directly or in terms of another goal"
   (seq blanks?
        goal-prefix
        blanks?
@@ -678,7 +678,7 @@ closed during the interval, we add the value of the property in that entry to th
   "A destination for archived trees: an org file, and a heading within that file."
   file heading)
 
-(def-rxx org-balance archive-loc
+(def-rxx-regexp org-balance archive-loc
   "The archive location, specified as a property of an Org entry.
 See Info node `(org) Archiving' and variable `org-archive-location'.
 Parsed as the structure `org-balance-archive-loc'."
