@@ -198,18 +198,18 @@ a newly created valu representing the difference of VALU1 and VALU2."
     (seven . 7) (eight . 8) (nine . 9)
     (ten . 10)))
 
-(def-rxx elu-valu number-name
+(def-rxx-regexp elu-valu number-name
   "The string name of a number, for the few numbers often written as words.
 Parsed as the numeric value of the number."
   (eval-regexp (regexp-opt (mapcar 'symbol-name (mapcar 'car elu-valu-number-names))))
   (lambda (match) (cdr-safe (assoc (intern match) elu-valu-number-names))))
 
-(def-rxx elu-valu number-name-range
+(def-rxx-regexp elu-valu number-name-range
   "A pair of numbers"
   (seq (number-name a)  blanks (number-name b))
   (cons a b))
 
-(def-rxx elu-valu number
+(def-rxx-regexp elu-valu number
   "A general number -- floating-point or integer.
 Some frequently-used numbers can also be written in English;
 see variable `elu-valu-number-names'.
@@ -243,7 +243,7 @@ by whitespace, it throws an error rather than silently returning zero.
 
 (defalias 'elu-valu-parse-number 'elu-valu-string-to-number)
 
-(def-rxx elu-valu number-range
+(def-rxx-regexp elu-valu number-range
   "A range of two numbers separated by a dash; or a single number,
 in which case the range contains just that number.   
 Parsed as a cons of range start and end."
@@ -256,11 +256,11 @@ such as $5 into the canonical form `5 dollars'.  Each hook must take a string as
 `elu-valu' struct if it successfully parsed the string, or nil if it didn't.")
 ;; FIXME: such hooks should also provide the regexp to much this.  so, an aregexp.
 
-(def-rxx elu-valu unit
+(def-rxx-regexp elu-valu unit
   "A unit name.   See customization variable "
   (eval-regexp (regexp-opt (mapcar 'symbol-name (mapcar 'car elu-valu-unit2dim-alist)))))
 
-(def-rxx elu-valu valu "Value with unit"
+(def-rxx-regexp elu-valu valu "Value with unit"
   ;; Either a number optionally followed by a unit (unit assumed to be "item" if not given),
   ;; or an optional number (assumed to be 1 if not given) followed by a unit.
   ;; But either a number or a unit must be given.
@@ -275,7 +275,7 @@ such as $5 into the canonical form `5 dollars'.  Each hook must take a string as
    (run-hook-with-args-until-success 'elu-valu-parse-valu-hooks valu-str)
    (rxx-parse-string elu-valu valu valu-str)))
 
-(def-rxx elu-valu valu-range
+(def-rxx-regexp elu-valu valu-range
   "Value range"
   ;; Either a number range optionally followed by a unit (unit assumed to be "item" if not given),
   ;; or an optional number (assumed to be 1 if not given) followed by a unit.
@@ -289,13 +289,13 @@ such as $5 into the canonical form `5 dollars'.  Each hook must take a string as
 
 (defstruct (elu-valu-ratio (:include elu-ratio)))
 
-(def-rxx elu-valu ratio-word "A word separating the numerator and denominator of a fraction."
+(def-rxx-regexp elu-valu ratio-word "A word separating the numerator and denominator of a fraction."
   (or "per" "every" "each" "for every" "for each" "/" "a" "in a"))
 
 ;; allow the unit of a valu to be another valu.
 
 
-(def-rxx elu-valu valu-ratio "A ratio of valus such as 1 hour per week"
+(def-rxx-regexp elu-valu valu-ratio "A ratio of valus such as 1 hour per week"
   (sep-by blanks (valu numer) ratio-word (valu denom))
   (make-elu-valu-ratio :numer numer :denom denom))
 

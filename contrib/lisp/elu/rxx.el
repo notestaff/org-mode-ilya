@@ -486,7 +486,7 @@ Fields:
   "Construct the name of the buffer-local var storing the given rxx-def"
   (intern (concat (symbol-name namespace) "-" (symbol-name name) "-rxx-def-local")))
 
-(defmacro* def-rxx (namespace name descr form &optional (parser 'identity))
+(defmacro* def-rxx-regexp (namespace name descr form &optional (parser 'identity))
   "Defeine an rxx regexp."
   `(defconst ,(rxx-def-global-var namespace name)
      (make-rxx-def :namespace (quote ,namespace) :name (quote ,name) :descr ,descr
