@@ -1,0 +1,6 @@
+General-purpose Emacs Lisp utilities.
+
+* elu.el - general-purpose utilities
+* elu-valu.el - representing values with units
+* rxx.el - building complex regular expressions
+
