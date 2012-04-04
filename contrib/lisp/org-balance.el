@@ -85,7 +85,9 @@
 ;; Section: org-balance customizations
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defconst org-balance-goal-todo-keyword "GOAL")
+(defconst org-balance-goal-todo-keyword "GOAL"
+  "The keyword used to denote goals.  Alternatives might include QUOTA, ALLOC, etc,
+or a translation into your local language.")
 
 (defconst org-balance-goal-todo-keyword-multiple (concat org-balance-goal-todo-keyword "S"))
 
@@ -138,53 +140,64 @@ in the syntax of `org-matcher-time'."
   "Face used for showing malformed goals"
   )
 
+(defun org-balance-replace-goal-strings (x)
+  "Replace strings in the given tree"
+  (typecase x
+   (string (save-match-data
+	     (string-search-and-replace "GOAL" org-balance-goal-todo-keyword x)))
+   (cons (cons (org-balance-replace-goal-strings (car x))
+	       (org-balance-replace-goal-strings (cdr x))))
+   (t x)))
+  
+
 (defconst org-balance-custom-commands
-  (quote (("b" . "Org-balance commands")
-	  ("br" "Recent items" tags "TIMESTAMP>\"<-4w>\"|TIMESTAMP_IA>\"<-4w>\"/-GOAL"
-	   ((org-agenda-overriding-header "Org-balance recent items")
-	    (org-agenda-sorting-strategy (quote (user-defined-down)))
-	    (org-agenda-cmp-user-defined (quote org-balance-cmp-recent))
-	    (org-agenda-before-sorting-filter-function (quote org-balance-save-timestamp))
-	    ;(org-agenda-skip-function (quote (org-agenda-skip-entry-if (quote nottimestamp))))
-	    (org-show-hierarchy-above (quote ((agenda . t))))))
-	  ("bt" "Recent todos" tags "DEADLINE={\\S-}&DEADLINE<\"<+1w\">/!-GOAL"
-	   ((org-agenda-overriding-header "Org-balance recent todos")
-	    (org-agenda-sorting-strategy (quote (priority-down
-						 category-keep
-						 user-defined-down)))
-	    (org-agenda-cmp-user-defined (quote org-balance-cmp-recent))
-	    (org-agenda-before-sorting-filter-function (quote org-balance-save-timestamp))
-	    (org-show-hierarchy-above (quote ((agenda . t))))))
-	  ("bd" "Deadlines" tags-todo "DEADLINE={\\S-}&DEADLINE<\"<+1w\">/!-GOAL-DONE"
-	   ((org-agenda-overriding-header "Org-balance deadlines")
-	    (org-agenda-sorting-strategy (quote (priority-down
-						 category-keep
-						 user-defined-down)))
-	    (org-agenda-cmp-user-defined (quote org-balance-cmp-recent))
-	    (org-agenda-before-sorting-filter-function (quote org-balance-save-timestamp))
-	    (org-show-hierarchy-above (quote ((agenda . t))))))
-	  ("bn" "Neglected items" tags "org_balance_delta_val<0&TODO=\"GOAL\""
-	   ((org-agenda-overriding-header "Org-balance neglected items")
-	    (org-agenda-sorting-strategy (quote (priority-down
-						 category-keep
-						 user-defined-up)))
-	    (org-agenda-cmp-user-defined (quote org-balance-cmp))
-	    (org-agenda-before-sorting-filter-function (quote org-balance-save-amt-neglected))
-	    (org-show-hierarchy-above (quote ((agenda . t))))
-	    (org-agenda-overriding-columns-format "%org_balance_heading %PRIORITY %CATEGORY %org_balance_delta_val(delta)")
-	    (org-not-done-keywords (list "GOAL"))))
-	  ("bs" "Neglected goals in current file" tags-tree "org_balance_delta_val<0/!GOAL" ((org-not-done-keywords (list "GOAL"))))
-	  ("bk" "Ok items" tags "org_balance_delta_val>=0/!GOAL"
-	   ((org-agenda-overriding-header "Org-balance neglected items")
-	    (org-agenda-sorting-strategy (quote (priority-down
-						 category-keep
-						 user-defined-up)))
-	    (org-agenda-cmp-user-defined (quote org-balance-cmp))
-	    (org-agenda-before-sorting-filter-function (quote org-balance-save-amt-neglected))
-	    (org-show-hierarchy-above (quote ((agenda . t))))
-	    (org-not-done-keywords (list "GOAL"))))
-	  ("bf" "Ok goals in current file" tags-tree "org_balance_delta_val>=0/!GOAL" ((org-not-done-keywords (list "GOAL"))))
-	  ))
+  (org-balance-replace-goal-strings
+   '(("b" . "Org-balance commands")
+     ("br" "Recent items" tags "TIMESTAMP>\"<-4w>\"|TIMESTAMP_IA>\"<-4w>\"/-GOAL"
+      ((org-agenda-overriding-header "Org-balance recent items")
+       (org-agenda-sorting-strategy (quote (user-defined-down)))
+       (org-agenda-cmp-user-defined (quote org-balance-cmp-recent))
+       (org-agenda-before-sorting-filter-function (quote org-balance-save-timestamp))
+					;(org-agenda-skip-function (quote (org-agenda-skip-entry-if (quote nottimestamp))))
+       (org-show-hierarchy-above (quote ((agenda . t))))))
+     ("bt" "Recent todos" tags "DEADLINE={\\S-}&DEADLINE<\"<+1w\">/!-GOAL"
+      ((org-agenda-overriding-header "Org-balance recent todos")
+       (org-agenda-sorting-strategy (quote (priority-down
+					    category-keep
+					    user-defined-down)))
+       (org-agenda-cmp-user-defined (quote org-balance-cmp-recent))
+       (org-agenda-before-sorting-filter-function (quote org-balance-save-timestamp))
+       (org-show-hierarchy-above (quote ((agenda . t))))))
+     ("bd" "Deadlines" tags-todo "DEADLINE={\\S-}&DEADLINE<\"<+1w\">/!-GOAL-DONE"
+      ((org-agenda-overriding-header "Org-balance deadlines")
+       (org-agenda-sorting-strategy (quote (priority-down
+					    category-keep
+					    user-defined-down)))
+       (org-agenda-cmp-user-defined (quote org-balance-cmp-recent))
+       (org-agenda-before-sorting-filter-function (quote org-balance-save-timestamp))
+       (org-show-hierarchy-above (quote ((agenda . t))))))
+     ("bn" "Neglected items" tags "org_balance_delta_val<0&TODO=\"GOAL\""
+      ((org-agenda-overriding-header "Org-balance neglected items")
+       (org-agenda-sorting-strategy (quote (priority-down
+					    category-keep
+					    user-defined-up)))
+       (org-agenda-cmp-user-defined (quote org-balance-cmp))
+       (org-agenda-before-sorting-filter-function (quote org-balance-save-amt-neglected))
+       (org-show-hierarchy-above (quote ((agenda . t))))
+       (org-agenda-overriding-columns-format "%org_balance_heading %PRIORITY %CATEGORY %org_balance_delta_val(delta)")
+       (org-not-done-keywords (list "GOAL"))))
+     ("bs" "Neglected goals in current file" tags-tree "org_balance_delta_val<0/!GOAL" ((org-not-done-keywords (list "GOAL"))))
+     ("bk" "Ok items" tags "org_balance_delta_val>=0/!GOAL"
+      ((org-agenda-overriding-header "Org-balance neglected items")
+       (org-agenda-sorting-strategy (quote (priority-down
+					    category-keep
+					    user-defined-up)))
+       (org-agenda-cmp-user-defined (quote org-balance-cmp))
+       (org-agenda-before-sorting-filter-function (quote org-balance-save-amt-neglected))
+       (org-show-hierarchy-above (quote ((agenda . t))))
+       (org-not-done-keywords (list "GOAL"))))
+     ("bf" "Ok goals in current file" tags-tree "org_balance_delta_val>=0/!GOAL" ((org-not-done-keywords (list "GOAL"))))
+     ))
   "Custom agenda commands for accessing org results")
 
 (defun org-balance-agenda ()
@@ -211,57 +224,58 @@ in the syntax of `org-matcher-time'."
 ;; and it's good that the names are explicitly put into the module.
 ;; yes, it's a good design.
 
-(def-rxx-regexp org-balance priority
-  "A priority cookie on an Org headline.   Parsed as the entire cookie (e.g. [#A])."
-  (seq "[#" (any upper digit) "]"))
-
-(def-rxx-regexp org-balance goal-prefix
-  "The part of a GOAL line up to the goal name: the stars, the GOAL keyword, and optionally the priority. "
-  (seq bol (sep-by blanks (seq (1+ "*")) (seq bow (eval org-balance-goal-todo-keyword) eow) priority?) blanks?))
-
-(def-rxx-regexp org-balance tag-name "The name of a tag" (1+ (any alnum "_@#%")))
-(def-rxx-regexp org-balance tags "The tags at the end of a headline"
-  (& blanks? (opt ":" (1+ (& tag-name ":")) eol)) tag-name-list)
-
-(def-rxx-regexp org-balance matcher "A tags and properties matcher, as described at
+(def-rxx-regexps org-balance
+  (priority
+   "A priority cookie on an Org headline.   Parsed as the entire cookie (e.g. [#A])."
+   (seq "[#" (any upper digit) "]"))
+  
+  (goal-prefix
+   "The part of a GOAL line up to the goal name: the stars, the GOAL keyword, and optionally the priority. "
+   (seq bol (sep-by blanks (seq (1+ "*")) (seq bow (eval org-balance-goal-todo-keyword) eow) priority?) blanks?))
+  
+  (tag-name "The name of a tag" (1+ (any alnum "_@#%")))
+  
+  (tags "The tags at the end of a headline"
+	(& blanks? (opt ":" (1+ (& tag-name ":")) eol)) tag-name-list)
+  
+  (matcher "A tags and properties matcher, as described at
 URL 'http://orgmode.org/manual/Matching-tags-and-properties.html#Matching-tags-and-properties'."
-  (1+ nonl) org-make-tags-matcher)
+	   (1+ nonl) org-make-tags-matcher)
 
-(def-rxx-regexp org-balance inactive-timestamp
-  "An Org-mode inactive timestamp, such as '[2010-09-07 Tue 18:30]'.
+  (inactive-timestamp
+   "An Org-mode inactive timestamp, such as '[2010-09-07 Tue 18:30]'.
 Parsed as a floating-point value of time in seconds."
-  (seq "[" (named-grp time (1+ nonl)) "]" )
-  (org-float-time (apply 'encode-time (org-parse-time-string time))))
-
-(def-rxx-regexp org-balance clock
-  "An Org-mode clock line giving a time interval, such as when
+   (seq "[" (named-grp time (1+ nonl)) "]" )
+   (org-float-time (apply 'encode-time (org-parse-time-string time))))
+  
+  (clock
+   "An Org-mode clock line giving a time interval, such as when
 logging work time (see Info node `(org)Clocking work time').
 E.g. '	CLOCK: [2010-09-09 Thu 06:30]--[2010-09-09 Thu 12:46] =>  6:16'.
 Parsed as a cons of the start and end times."
-  (seq bol blanks? (eval org-clock-string) blanks?
-		   (inactive-timestamp from) (1+ "-")
-		   (inactive-timestamp to)
-		   " => " (1+ nonl))
-  (cons from to))
+   (seq bol blanks? (eval org-clock-string) blanks?
+	(inactive-timestamp from) (1+ "-")
+	(inactive-timestamp to)
+	" => " (1+ nonl))
+   (cons from to))
 
-
-(def-rxx-regexp org-balance closed
-  "An Org-mode line indicating when an entry was closed.
+  (closed
+   "An Org-mode line indicating when an entry was closed.
 Parsed as the floating-point time."
-  (sep-by blanks bol (or (eval org-closed-string) "- State \"DONE\"       from \"NEXT\"      ")
-	  (inactive-timestamp closed-time))
-  ;; FIXME: support state logging.  for now, assume the default format.
-  ;; so, if it goes as - State from   etc -- we take the timestamp.  but only if it was the done state!
-  ;; figure out how to customize this in case the user's thing has been customized.
-  closed-time)
+   (sep-by blanks bol (or (eval org-closed-string) "- State \"DONE\"       from \"NEXT\"      ")
+	   (inactive-timestamp closed-time))
+   ;; FIXME: support state logging.  for now, assume the default format.
+   ;; so, if it goes as - State from   etc -- we take the timestamp.  but only if it was the done state!
+   ;; figure out how to customize this in case the user's thing has been customized.
+   closed-time)
 
-(def-rxx-regexp org-balance prop-name "A valid name of an Org entry property" (& alpha (0+ (any alnum "_-"))))
-(def-rxx-regexp org-balance link "An Org link. Parsed as an elu-loc at the target of the link."
-  (named-grp link (eval-regexp (rxx-make-shy org-any-link-re)))
-  (elu-save excursion restriction window-excursion match-data
-    (goto-char (rxx-match-beginning 'link))
-    (org-balance-open-at-point)
-    (point-elu-loc)))
+  (prop-name "A valid name of an Org entry property" (& alpha (0+ (any alnum "_-"))))
+  (link "An Org link. Parsed as an elu-loc at the target of the link."
+	(named-grp link (eval-regexp org-any-link-re))
+	(elu-save excursion restriction window-excursion match-data
+	  (goto-char (rxx-match-beginning 'link))
+	  (org-balance-open-at-point)
+	  (point-elu-loc))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Section: Utils
@@ -608,7 +622,7 @@ Originally adapted from `org-closed-in-range'.
   (elu-save excursion match-data
     (goto-char (point-min))
     (let ((prop-occurrences (make-vector (elu-intervals-n intervals) nil))
-	  (prop-default (concat "default_" prop)))
+	  (prop-default (concat prop "_default")))
       (rxx-do-search-fwd org-balance closed closed-time
 	
 	;; first, if closed-time is completely outside our range of intervals, just skip.
@@ -634,7 +648,7 @@ Originally adapted from `org-closed-in-range'.
 		    (message
 		     "Warning: at line %d of file %s, could not add %s to list for goal %s; list-so-far is %s"
 		     (line-number-at-pos (point)) (buffer-file-name (current-buffer)) prop-here prop prop-occurrences)
-		    (incf org-balance-num-warnings)
+		    (when (boundp 'org-balance-num-warnings) (incf org-balance-num-warnings))
 		    nil))))
 	     (when (and prop-valu-here (not (zerop (elu-valu-val prop-valu-here))))
 	       ;(message "adding prop at %s val %s for prop %s" pos-here prop-valu-here prop)
@@ -712,13 +726,13 @@ Include any entries that may have been archived from the current subtree."
 ;	   (message "summing %s within %s %s over %s as unit %s"
 ;		    prop (point-min) (point-max) intervals unit)
 	   (org-balance-sum-property prop intervals unit (not 'prop-default-val))))
-	(prop-default-val (org-entry-get nil (concat "default_" prop) 'inherit)))
+	(prop-default-val (org-entry-get nil (concat prop "_default") 'inherit)))
     (unless (string= prop org-balance-actualtime-prop)
       (let ((olpath-regexp (concat "^[ \t]+:ARCHIVE_OLPATH: " (mapconcat 'identity (org-get-outline-path) "/"))))
 	(dolist (loc (org-balance-find-all-archive-targets))
 	  (elu-save excursion window-excursion restriction match-data
 	    (when (org-balance-archive-loc-file loc)
-	      (find-file (org-balance-archive-loc-file loc)))
+	      (find-file (org-balance-archive-loc-file loc)))  ;; FIXME - use existing (possibly unsaved) buffer for that file if present
 	    (widen)
 	    (when (org-balance-archive-loc-heading loc)
 	      (save-match-data
@@ -941,7 +955,7 @@ Fields:
 		;; so, say we have parsed the thing we depend on.
 		;;
 		)))
-	(error (make-org-balance-goal-status :err err))
+	(somecond (make-org-balance-goal-status :err err))
 	)
       )))
 
@@ -1097,7 +1111,7 @@ Usually done in preparation for generating a new record of how well each goal is
     (widen)
     (dolist (prop '("org_balance_delta_val" "goal_delta_percent" "goal_updated"))
       (org-delete-property-globally prop))
-    (org-map-entries '(org-toggle-tag "goal_error" 'off) "+goal_error/!GOAL" 'file)))
+    (org-map-entries '(org-toggle-tag "goal_error" 'off) "+goal_error&TODO=\"GOAL\"" 'file)))
 
 ;;;
 ;;; Subsection: Commands for recording items
@@ -1238,7 +1252,7 @@ See also `org-balance-record-time' and Info node `(org) MobileOrg'.
 	 (if (org-balance-goal-status-err status)
 	     (incf num-err)
 	   (incf num-ok))))
-     "TODO=\"GOAL\"")
+     (format "TODO=\"%s\"" org-balance-goal-todo-keyword))
     (message "%s goals updated ok, %s had errors" num-ok num-err)))
 
 
@@ -1461,7 +1475,7 @@ as a text property, for later use by org-balance-cmp-recent.
 	 
 	 )
        )
-     "LEVEL>0/!GOAL"
+     "LEVEL>0/GOAL"
      )
 
     ; so, for a given entry, we can get the value
