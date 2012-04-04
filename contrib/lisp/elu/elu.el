@@ -38,6 +38,18 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
+;; Section: Customizations 
+;;
+;; Customizations for the elu library
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defgroup elu nil
+  "General-purpose Emacs Lisp utilities"
+  :tag 'elu
+  :group 'extensions)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
 ;; Section: Functions defined here so they can be used in other definitions
 ;;
 ;; Logically, they belong in other sections of the code.
@@ -598,6 +610,10 @@ Also, lets you use a function symbol for the replacement function definition."
 (defmacro elu-when-bound (x)
   "If the symbol X is bound then return the value of X, else return nil."
   `(when (boundp (quote ,x)) ,x))
+
+(defmacro elu-when-bound-func (x)
+  "If the symbol X is bound then return the value of X, else return nil."
+  (when (boundp x) x))
 
 (defun elu-assoc-val (key alist &optional error-message)
   "Looks up KEY in association list ALIST.  Unlike `assoc', returns the associated value rather than the associated pair.

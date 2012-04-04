@@ -96,18 +96,33 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
-;; Section: general utils
-;;
-;; General-purpose utility routines used in the rxx module.
-;; Also, for portability, reimplementation of some routines from the
-;; cl (Common Lisp) module, and some routines available in GNU Emacs but not
-;; in XEmacs.
+;; Section: Customization
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defgroup rxx nil
+  "Options for the rxx regexp library"
+  :tag "rxx library options"
+  :group 'elu)
+
+(defcustom rxx-max-lisp-eval-depth 1200
+  "Value to which to increase `max-lisp-eval-depth' while parsing.
+Parsing can get highly nested so this can be needed especially if not byte-compiling."
+  :group 'rxx
+  :type 'integer)
+
+(defcustom rxx-max-specpdl-size 1200
+  "Value to which to increase `max-specpdl-size' while parsing.
+Parsing can get highly nested so this can be needed especially if not byte-compiling."
+  :group 'rxx
+  :type 'integer)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 ;; Section: Utils for manipulating regexp strings
+;;
+;; These work with plain Emacs regexp strings, not just the annotated ones
+;; defined by this package.
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -169,8 +184,9 @@ Taken from `subregexp-context-p'."
   "Return a new regexp that makes all groups in REGEXP shy; and
 wrap a shy group around the returned REGEXP.  WARNING: this will
 kill any backrefs!  Adapted from `regexp-opt-depth'."
-  ;; FIXME: check for backrefs, throw error if any present
   (save-match-data
+    (assert (not (string-match "\\\\[1-9]" regexp))
+	    nil "rxx-make-shy: does not work on regexps with backrefs")
     ;; Hack to signal an error if REGEXP does not have balanced parentheses.
     (string-match regexp "")
     ;; Count the number of open parentheses in REGEXP.
@@ -190,25 +206,49 @@ kill any backrefs!  Adapted from `regexp-opt-depth'."
     (while (and (string-match "\\\\(\\(\\)[^?]" regexp)
 		(rxx-subregexp-context-p regexp (match-beginning 0)))
       (setq regexp (replace-match "?:" 'fixedcase 'literal regexp 1))))
-    (rxx-check-regexp-valid regexp)))
+    (rxx-check-regexp-valid regexp)
+    (assert (zerop (rxx-opt-depth regexp)))
+    regexp))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
-;; Section: rxx-info
+;; Section: rxx-regexp representation
 ;;
 ;; Extra information we store with each constructed regexp.  This information
 ;; lets us reuse the regexp as a building block of larger regexps.
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defstruct rxx-info
+(defstruct
+  rxx-def
+  "The definition of an rxx regexp.
+
+Fields:
+
+   NAMESPACE - the namespace to which this rxx-def belongs.  a symbol.
+   NAME - name of the aregexp.  a symbol.
+   DESCR - the description of this regexp.  typically says what it matches as
+     well as what it gets parsed into by the PARSER below.
+   FORM - the form defining this regexp, in an extension of `rx' syntax
+   PARSER - the parser for this regexp, that turns its matches into programmatic
+     objects.  Either a lisp form, or a one-argument function.  Can refer to the
+     result of parsing named subgroups by the subgroup names.
+"
+  ;; other things to store here:
+  ;; case-sens, posix-search, 
+  
+  namespace name descr form (parser 'identity))
+
+
+
+(defstruct rxx-inst
   "Information about a regexp.  Describes both a general template
 for creating instances of this regexp, and a particular
-instantiation of that template.  When `rxx-to-string' analyzes an
-sexp defining a regexp, it creates one `rxx-info' for the overall
+instantiation of that template.  When `rxx-instantiate' analyzes an
+sexp defining a regexp, it creates one `rxx-inst' for the overall
 regexp and one for each named subgroup within the regexp.
 
-The `rxx-info' for the overall regexp is attached to the regexp
+The `rxx-inst' for the overall regexp is attached to the regexp
 string as a text property, creating an _annotated_ regexp, or
 aregexp for short.  This extended information enables us to parse
 matches of this regexp into programmatic objects, and to use this
@@ -218,7 +258,7 @@ Fields:
 
    Fields describing the reusable regexp template:
 
-     FORM - the sexp defining this regexp, in the syntax accepted by `rxx-to-string'.
+     FORM - the sexp defining this regexp, in the syntax accepted by `rxx-instantiate'.
      PARSER - form or function that parses matches of this regexp into programmatic objects.   It can refer to parsed
         values of named direct subgroups simply by subgroup name (they're dynamically scoped in whenever the parser
         is invoked).  If a function, it takes one argument: the string representing the full match to this regexp
@@ -228,27 +268,21 @@ Fields:
    Fields describing the particular instantiation of the template:
 
      ENV - environment for resolving references to named subgroups of this regexp.  Maps subgroup name to
-       `rxx-info' for the subgroup.
+       `rxx-inst' for the subgroup.
      NUM - the numbered group corresponding to to matches of this regexp (as would be passed to `match-string').
 "
-  form parser descr env num)
+  def env num regexp)
+
+(defun rxx-inst-form (rxx-inst) (rxx-def-form (rxx-inst-def rxx-inst)))
+(defun rxx-inst-parser (rxx-inst) (rxx-def-parser (rxx-inst-def rxx-inst)))
+(defun rxx-inst-descr (rxx-inst) (rxx-def-descr (rxx-inst-def rxx-inst)))
 
 
-(defstruct rxx
-  "An annotated regexp: the combination of regexp string and information about
-how it was constructed (`rxx-info')."
-  regexp info)
-
-(defun get-rxx-info (aregexp)
-  "Extract rxx-info from regexp struct AREGEXP,
+(defun get-rxx-inst (aregexp)
+  "Extract rxx-inst from regexp struct AREGEXP,
 if there, otherwise return nil."
-  (when (rxx-p aregexp)
-    (rxx-info aregexp)))
-
-(defun rxx-regexp-string (aregexp)
-  "If AREGEXP is a plain string regexp, return that; if it is
-an `rxx' structure, return the regexp within that."
-  (if (rxx-p aregexp) (rxx-regexp aregexp) aregexp))
+  (when (rxx-inst-p aregexp)
+    aregexp))
 
 (defun rxx-opt-depth (aregexp)
   "Return `regexp-opt-depth' of the regexp string in AREGEXP."
@@ -263,7 +297,7 @@ an `rxx' structure, return the regexp within that."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun rxx-new-env (&optional parent-env)
-  "Create a fresh environment mapping group names to rxx-infos,
+  "Create a fresh environment mapping group names to rxx-insts,
 with the parent environment PARENT-ENV.
 There is an environment for the top-level regexp, and also a
 separate one within each named group (for nested named groups).
@@ -278,7 +312,7 @@ having to find and rebind all the symbols."
   (cdr (first rxx-env)))
 
 (defun rxx-env-lookup (grp-name rxx-env)
-  "Lookup the rxx-info for the named group GRP-NAME in the
+  "Lookup the rxx-inst for the named group GRP-NAME in the
 environment RXX-ENV, or return nil if not found.  GRP-NAME is
 either a symbol, or a list of symbols indicating a path through
 nested named groups.  Since multiple groups may be bound to the
@@ -293,35 +327,35 @@ same name in an environment, this returns a list."
 	       (lambda (grp-info)
 		 (if (cdr grp-name)
 		     (rxx-env-lookup (cdr grp-name)
-				     (rxx-info-env grp-info))
+				     (rxx-inst-env grp-info))
 		   (list grp-info)))
 	       grp-infos)) 'eq))))
 
-(defun rxx-env-bind (grp-name rxx-info rxx-env)
-  "Bind group name GRP-NAME to group annotation RXX-INFO in the
+(defun rxx-env-bind (grp-name rxx-inst rxx-env)
+  "Bind group name GRP-NAME to group annotation RXX-INST in the
 environment RXX-ENV.  If already bound, add to the binding."
   (let ((entry (or (assq grp-name rxx-env)
 		   (let ((new-entry (list (cons grp-name nil))))
 		     (nconc rxx-env new-entry)
 		     (first new-entry)))))
-    (setcdr entry (cons rxx-info (cdr entry)))
+    (setcdr entry (cons rxx-inst (cdr entry)))
     rxx-env))
 
-(defmacro do-rxx-env (grp-name rxx-infos rxx-env &rest forms)
-  "Execute forms for each (grp-name, rxx-info) binding in this env"
+(defmacro do-rxx-env (grp-name rxx-insts rxx-env &rest forms)
+  "Execute forms for each (grp-name, rxx-inst) binding in this env"
   (declare (indent 3))
   (let ((cur-var (make-symbol "cur")))
     `(let ((,cur-var (cdr ,rxx-env)))
        (while ,cur-var
 	 (let ((,grp-name (car (car ,cur-var)))
-	       (,rxx-infos (cdr (car ,cur-var))))
+	       (,rxx-insts (cdr (car ,cur-var))))
 	   ,@forms)
 	 (setq ,cur-var (cdr ,cur-var))))))
 
 (defun rxx-env-groups (rxx-env)
   "Return the list of top-level named groups in the environment RXX-ENV."
   (let (all-grps)
-    (do-rxx-env grp-name rxx-infos rxx-env
+    (do-rxx-env grp-name rxx-insts rxx-env
       (push grp-name all-grps))
     all-grps))
 
@@ -336,11 +370,11 @@ such as `replace-match', `match-substitute-replacement' or
 `replace-regexp-in-string'.  The annotated regexp must either be
 passed in as AREGEXP or scoped in as RXX-AREGEXP. "
   (declare (special rxx-aregexp))
-  (mapcar 'rxx-info-num
+  (mapcar 'rxx-inst-num
    (rxx-env-lookup
     grp-name
-    (rxx-info-env
-     (get-rxx-info
+    (rxx-inst-env
+     (get-rxx-inst
       (or aregexp (elu-when-bound rxx-aregexp)
 	  (error "The annotated regexp must be either passed in explicitly, or scoped in as `rxx-aregexp'")))))))
 
@@ -350,14 +384,18 @@ passed in as AREGEXP or scoped in as RXX-AREGEXP. "
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun rxx-call-parser (rxx-info match-str)
-  (let ((rxx-env (rxx-info-env rxx-info)))
-    (let* ((symbols (delq nil (mapcar 'car (rxx-info-env rxx-info))))
+(defun rxx-call-parser (rxx-inst match-str)
+  "Call the parser to parse the given match string."
+  (let ((rxx-env (rxx-inst-env rxx-inst)))
+    ;; For each named subgroup, recursively parse what
+    ;; it matched and assign the resulting parsed object
+    ;; to a variable of the same name as the subgroup.
+    (let* ((symbols (delq nil (mapcar 'car (rxx-inst-env rxx-inst))))
 	   (symbol-vals (mapcar
 			 (lambda (symbol)
 			   (rxx-match-val symbol))
 			 symbols))
-	   (parser (rxx-info-parser rxx-info)))
+	   (parser (rxx-inst-parser rxx-inst)))
       (elu-progv symbols symbol-vals
 	(save-match-data
 	  (if (functionp parser)
@@ -365,7 +403,7 @@ passed in as AREGEXP or scoped in as RXX-AREGEXP. "
 	    (eval parser)))))))
 
 (defun rxx-match-aux (code)
-  "Common code of `rxx-match-val', `rxx-match-string', `rxx-match-beginning' and `rxx-match-end'.  Looks up the rxx-info
+  "Common code of `rxx-match-val', `rxx-match-string', `rxx-match-beginning' and `rxx-match-end'.  Looks up the rxx-inst
 for the relevant named group, so that we can get the corresponding group explicitly numbered group number and pass it
 to `match-string', `match-beginning' or `match-end'."
   (declare (special grp-name object aregexp rxx-object rxx-aregexp rxx-env))
@@ -373,16 +411,16 @@ to `match-string', `match-beginning' or `match-end'."
     (let* ((rxx-env
 	    (or (elu-when-bound rxx-env)
 	      (let ((aregexp (or aregexp (when (boundp 'rxx-aregexp) rxx-aregexp))))
-		(rxx-info-env
+		(rxx-inst-env
 		 (or
-		  (get-rxx-info aregexp)
+		  (get-rxx-inst aregexp)
 		  (error "Annotated regexp created by `rxx' must either be passed in, or scoped in via RXX-AREGEXP"))))))
 	   (grp-infos (or (rxx-env-lookup grp-name rxx-env) (error "Named group %s not found" grp-name)))
 	   (matches-here
 	    (delq nil
 		  (mapcar
 		   (lambda (grp-info)
-		     (let ((grp-num (rxx-info-num grp-info)))
+		     (let ((grp-num (rxx-inst-num grp-info)))
 		       (when grp-num
 			 (let ((match (match-string grp-num
 						    (or object
@@ -394,7 +432,7 @@ to `match-string', `match-beginning' or `match-end'."
 	(let* ((match-info-here (first matches-here))
 	       (match-here (car match-info-here))
 	       (grp-info (cdr match-info-here))
-	       (grp-num (rxx-info-num grp-info)))
+	       (grp-num (rxx-inst-num grp-info)))
 	  (funcall code))))))
 
 (defun rxx-match-val (grp-name &optional object aregexp)
@@ -403,7 +441,7 @@ may be scoped in via RXX-OBJECT.  The annotated regexp must either be passed in 
   (declare (special rxx-object rxx-aregexp grp-info match-here))
   (rxx-match-aux
    (lambda ()
-       (let ((rxx-env (rxx-info-env grp-info)))
+       (let ((rxx-env (rxx-inst-env grp-info)))
 	 (rxx-call-parser grp-info match-here)))))
 
 (defun rxx-match-string (grp-name &optional object aregexp)
@@ -463,20 +501,6 @@ Fields:
 			 :exports (quote ,(elu-make-seq exports)))
      ,descr))
 
-(defstruct
-  rxx-def
-  "The definition of an rxx regexp.
-
-Fields:
-
-   NAMESPACE - the namespace to which this rxx-def belongs
-   NAME - name of the aregexp
-   DESCR - the description of this rxx
-   FORM - the form defining this rxx
-   PARSER - the parser for this rxx
-"
-  namespace name descr form parser)
-
 
 (defun rxx-def-global-var (namespace name)
   "Construct the name of the global var storing the given rxx-def"
@@ -493,24 +517,57 @@ Fields:
 		   :form (quote ,form) :parser (quote ,parser))
      ,descr))
 
+(defmacro def-rxx-regexps (namespace &rest regexp-defs)
+  "Define several regexps in the same NAMESPACE."
+  (cons 'progn
+	(mapcar
+	 (lambda (regexp-def)
+	   (append (list 'def-rxx-regexp namespace) regexp-def))
+	 regexp-defs)))
 
-(defun* rxx-get-symbol-local-var (symbol &optional namespace)
-  "Get the correct buffer-local var containing the rxx-def for the symbol, if there is one"
+(defun* rxx-find-symbol-namespace (symbol &optional namespace)
+  "Return the namespace for the given rxx-regexp name"
   (declare (special rxx-cur-namespace))
   (let ((rxx-cur-namespace (or namespace rxx-cur-namespace)))
     (dolist (test-namespace (cons rxx-cur-namespace (rxx-namespace-imports
 						     (symbol-value
 						      (rxx-namespace-global-var
 						       rxx-cur-namespace)))))
-      (let ((rxx-def-test-var (rxx-def-global-var test-namespace symbol)))
-	(when (boundp rxx-def-test-var)
-	  (let ((rxx-def-local (rxx-def-local-var test-namespace symbol)))
-	    (unless (local-variable-p rxx-def-local)
-	      (elu-with 'rxx-def (symbol-value rxx-def-test-var) (namespace form parser descr)
-	      (let* ((rxx-cur-namespace namespace)
-		     (the-rxx (rxx-to-string form parser descr)))
-		  (set (make-local-variable rxx-def-local) the-rxx))))
-	    (return-from rxx-get-symbol-local-var rxx-def-local)))))))
+      (when (boundp (rxx-def-global-var test-namespace symbol))
+	(return-from rxx-find-symbol-namespace test-namespace)))))
+
+(defun* rxx-get-symbol-local-var (symbol &optional namespace)
+  "Get the correct buffer-local var containing the rxx-def for the symbol, if there is one"
+  (declare (special rxx-no-cache))
+  (let ((symbol-namespace (rxx-find-symbol-namespace symbol namespace)))
+    (when symbol-namespace
+      (let ((rxx-def (symbol-value (rxx-def-global-var symbol-namespace symbol)))
+	    (rxx-def-local (rxx-def-local-var symbol-namespace symbol)))
+	(unless (and (local-variable-p rxx-def-local)
+		     (not (elu-when-bound rxx-no-cache))) 
+	  (let* ((rxx-cur-namespace (rxx-def-namespace rxx-def))
+		 (rxx-inst (rxx-instantiate rxx-def)))
+	    (set (make-local-variable rxx-def-local) rxx-inst)))
+	(return-from rxx-get-symbol-local-var rxx-def-local)))))
+
+(defun rxx-find-def (symbol)
+  "If SYMBOL names an rxx-regexp defined in the current namespace, return its definition,
+else return nil."
+  (let ((namespace (rxx-find-symbol-namespace symbol)))
+    (when namespace
+      (symbol-value (rxx-def-global-var namespace symbol)))))
+
+;; operations in terms of which everything else can be written:
+
+;; given a symbol:
+;;   - return the full namespace:symbol, or nil if does not exist
+;;        --> if specified, use that; if not, look if to see if this symbol was defined
+;;         in rxx-cur-namespace or things it imports.   rxx-cur-namespace can start out
+;;        as the global constant global-rxx-namespace.
+;;   - store rxx-def for a given symbol in namespace.
+;;   - store/load an instantiation of the symbol in a local namespace.
+;;    local can be a buffer-local variable but also a local binding.
+;     for the latter to work, it'd be best to have one var keep the definitions.
 	
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
@@ -530,34 +587,29 @@ the parsed object matched by this named group."
   (rx-check form)
   (or
    (and (boundp 'rxx-replace-named-grps)
-	   (cdr-safe (assoc (second form) rxx-replace-named-grps)))
+	(cdr-safe (assoc (second form) rxx-replace-named-grps)))
    (let* ((grp-name (second form))
-	  (grp-def-raw (third form))
+	  (grp-def-raw
+	   (or (third form) (error "Missing named group definition: %s" form)))
 	  (grp-num (incf rxx-num-grps))
 	  (old-rxx-env rxx-env)
 	  (rxx-env (rxx-new-env old-rxx-env))  ;; within each named group, a new environment for group names
 	  (grp-def
-	   (or (and (symbolp grp-def-raw)
-		    (get-rxx-info (symbol-value (rxx-get-symbol-local-var grp-def-raw))))
-	       (and (eq (car-safe grp-def-raw) 'regexp)  ; FIXME
-		    (get-rxx-info (second grp-def-raw)))
-	       (and (eq (car-safe grp-def-raw) 'eval-regexp)
-		    (get-rxx-info (eval (second grp-def-raw))))
-	       (make-rxx-info :parser 'identity :env (rxx-new-env)
-			      :form (or grp-def-raw (error "Missing named group definition: %s" form)))))
+	   (or
+	    (and (symbolp grp-def-raw) (rxx-find-def grp-def-raw))
+	    (and (eq (car-safe grp-def-raw) 'eval-rxx)
+		 (make-rxx-def :form (eval (second grp-def-raw))))
+	    (make-rxx-def :form grp-def-raw)))
+	  (regexp-here-raw (rx-to-string (rxx-def-form grp-def) 'no-group))
 	  (regexp-here (format "\\(%s\\)"
 			       (if (and (boundp 'rxx-disable-grps) (member grp-name rxx-disable-grps))
-				   (progn
-				     (message "DISABLING %s" grp-name)
-				     (rx-to-string (rxx-info-form grp-def))
-				     ".*")
+				   ".*"
 				 ;; here remove -any- shy groups around the whole thing.
-				 (rxx-remove-outer-shy-grps (rx-to-string (rxx-info-form grp-def) 'no-group))))))
-     (rxx-env-bind grp-name (make-rxx-info
+				 (rxx-remove-outer-shy-grps regexp-here-raw)))))
+     (rxx-env-bind grp-name (make-rxx-inst
+			     :def grp-def
 			     :num grp-num
-			     :parser (rxx-info-parser grp-def)
-			     :env rxx-env
-			     :form (rxx-info-form grp-def)) old-rxx-env)
+			     :env rxx-env) old-rxx-env)
      regexp-here)))
 
 (defun rxx-process-named-backref (form)
@@ -568,20 +620,25 @@ the parsed object matched by this named group."
 	 (prev-grp-defs (rxx-env-lookup grp-name rxx-env)))
     (unless prev-grp-defs (error "Group in backref not yet seen: %s" grp-name))
     (unless (= (length prev-grp-defs) 1) (error "Ambiguous backref to group %s" grp-name))
-    (rx-backref `(backref ,(rxx-info-num (first prev-grp-defs))))))
+    (rx-backref `(backref ,(rxx-inst-num (first prev-grp-defs))))))
 
 (defun rxx-process-eval-regexp (form &optional rx-parent)
   "Parse and produce code from FORM, which is `(eval-regexp FORM)'."
-  (declare (special rxx-num-grps))
   (rx-check form)
-  (let ((regexp (eval (second form))))
-    (incf rxx-num-grps (rxx-opt-depth regexp))
-    (concat "\\(?:" (rx-group-if (rxx-regexp-string regexp) rx-parent) "\\)")))
+  (concat "\\(?:" (rx-group-if (rxx-make-shy (eval (second form))) rx-parent) "\\)"))
+
+(defun rxx-process-eval-rxx (form &optional rx-parent)
+  "Parse and produce code from FORM, which is `(eval-rxx FORM)'."
+  (declare (special rxx-num-grps))
+  (rxx-process-eval-regexp
+   (list 'regexp
+	 (rxx-inst-regexp
+	  (rxx-instantiate (make-rxx-def :form (eval (second form))))))))
 
 ;; The following functions are created by the `elu-flet' call
-;; in `rxx-to-string', rather than being explicitly defined.
+;; in `rxx-instantiate', rather than being explicitly defined.
 ;; They reference the original functions from the `rx' package
-;; temporarily overridden during the `rxx-to-string' call.
+;; temporarily overridden during the `rxx-instantiate' call.
 (declare-function rx-form-orig "rxx.el" t 'fileonly)
 (declare-function rx-submatch-orig "rxx.el" t 'fileonly)
 (declare-function rx-regexp-orig "rxx.el" t 'fileonly)
@@ -589,7 +646,7 @@ the parsed object matched by this named group."
 
 (defun rxx-form (form &optional rx-parent)
   "Handle named subexpressions.  Any symbol whose variable value
-is an aregexp (e.g.  one defined by `defrxx') can be used as a
+is an aregexp (e.g.  one defined by `def-rxx-regexp') can be used as a
 form.  More specifically: if R is a symbol whose variable value
 is an aregexp, the form (R name) creates a named group (see
 `rxx-process-named-grp') with the name R matching that aregexp.
@@ -604,12 +661,12 @@ Also, R? is translated to (opt R) for a slight reduction in verbosity.
   (when (and (symbolp form) (elu-ends-with (symbol-name form) "?"))
     (setq form (list 'opt (intern (substring (symbol-name form) 0 -1)))))
   (cond ((and (consp form) (symbolp (first form))
-	      (get-rxx-info (symbol-value (rxx-get-symbol-local-var (first form)))))
+	      (get-rxx-inst (symbol-value (rxx-get-symbol-local-var (first form)))))
 	 (rxx-process-named-grp (list 'named-grp (second form)
 				      (first form))))
-	((and (symbolp form) (rxx-get-symbol-local-var form) (boundp 'rxx-env)
+	((and (symbolp form) (rxx-get-symbol-local-var form)
 	      (not (rxx-env-lookup (rxx-get-symbol-local-var form) rxx-env))
-	      (get-rxx-info (symbol-value (rxx-get-symbol-local-var form))))
+	      (get-rxx-inst (symbol-value (rxx-get-symbol-local-var form))))
 	 (rxx-process-named-grp (list 'named-grp form form)))
 	(t (rx-form-orig form rx-parent))))
 
@@ -621,13 +678,9 @@ number to which it corresponds."
   (incf rxx-num-grps)
   (rx-submatch-orig form))
 
-(defun rxx-regexp-replacement (form)
-  "Update our count of non-shy subgroups to include any subgroups of the
-regexp inserted here."
-  (declare (special rxx-num-grps))
-  (prog1
-      (rx-regexp-orig form)
-    (incf rxx-num-grps (rxx-opt-depth (second form)))))
+(defun rxx-regexp (form)
+  "Make all subgroups of the regexp shy."
+  (rx-regexp-orig (list 'regexp (rxx-make-shy (second form)))))
 
 (defun rxx-process-sep-by (form)
   "Process the sep-by form, which looks like (sep-by separator ....)"
@@ -674,7 +727,7 @@ Used for bottoming out bounded recursion (see `rxx-process-recurse').")
       (rx-group-if (rxx-remove-unneeded-shy-grps (rx-to-string (second form) 'no-group)) '*))))
 
 (defun rxx-or (form)
-  "When called via `rxx-to-string', modify `rx-or' behavior
+  "When called via `rxx-instantiate', modify `rx-or' behavior
 as described below.
 
 For bounded recursion, remove any OR clauses consisting of
@@ -722,8 +775,8 @@ return the list of parsed numbers, omitting the blanks.   See also
   (if (memq (first form) '(optional opt zero-or-one ? ??))
       (rx-kleene-orig form)
     (let* (return-value
-	   (wrap-grp-num (when (boundp 'rxx-num-grps) (incf rxx-num-grps)))
-	   (rxx-num-grps (elu-when-bound rxx-num-grps))
+	   (wrap-grp-num (incf rxx-num-grps))
+	   (rxx-num-grps rxx-num-grps)
 	   (parent-rxx-env (elu-when-bound rxx-env))
 	   (rxx-env (rxx-new-env parent-rxx-env))
 	   (sep-by-form (when (eq (car-safe (cdr-safe form)) :sep-by) (third form)))
@@ -760,7 +813,7 @@ return the list of parsed numbers, omitting the blanks.   See also
 
       (setq return-value (format "\\(%s\\)" (rxx-make-shy return-value)))
       (progn
-	(do-rxx-env grp-name rxx-infos rxx-env
+	(do-rxx-env grp-name rxx-insts rxx-env
 	  (let ((new-parser
 		 `(lambda (match-str)
 		    (let ((rxx-cur-namespace (quote ,(elu-when-bound rxx-cur-namespace))))
@@ -775,16 +828,19 @@ return the list of parsed numbers, omitting the blanks.   See also
 			    (save-match-data
 			      (setq parse-result
 				    (rxx-parse
-				     (rxx-to-string repeat-form
+				     (rxx-instantiate
+				      (make-rxx-def :form repeat-form
+						    :parser
 						    ,`(lambda (match-str)
 							(mapcar (lambda (repeat-grp-name)
 								  (rxx-match-val (list repeat-grp-name (quote ,grp-name))))
-								(elu-when-bound repeat-grp-names))))
+								(elu-when-bound repeat-grp-names)))))
 				     match-str
 				     (not 'partial-ok) 'error-ok)))))
 		      parse-result)))))
 	    (rxx-env-bind (intern (concat (symbol-name grp-name) "-list"))
-			  (make-rxx-info :parser new-parser :env (rxx-new-env) :num wrap-grp-num)
+			  (make-rxx-inst
+			   :def (make-rxx-def :parser new-parser) :env (rxx-new-env) :num wrap-grp-num)
 			  parent-rxx-env))))
       return-value)))
 
@@ -796,7 +852,7 @@ return the list of parsed numbers, omitting the blanks.   See also
 ;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defun rxx-to-string (form &optional parser descr)
+(defun rxx-instantiate (rxx-def)
   "Construct a regexp from its readable representation as a lisp FORM, using the syntax of `rx-to-string' with some
 extensions.  The extensions, taken together, allow specifying simple grammars
 in a modular fashion using regular expressions.
@@ -805,10 +861,11 @@ For detailed description, see `rxx'.
 "
   (elu-flet ((rx-form rxx-form)
 	     (rx-submatch rxx-submatch)
-	     (rx-regexp rxx-regexp-replacement)
+	     (rx-regexp rxx-regexp)
 	     (rx-kleene rxx-kleene))
 	     
-    (let* ((max-lisp-eval-depth (max max-lisp-eval-depth 1200))
+    (let* ((max-lisp-eval-depth (max max-lisp-eval-depth rxx-max-lisp-eval-depth))
+	   (max-specpdl-size (max max-specpdl-size rxx-max-specpdl-size))
 	   (rxx-env (rxx-new-env))
 	   (rxx-num-grps 0)
 	   rxx-or-branch
@@ -817,6 +874,7 @@ For detailed description, see `rxx'.
 	   ;; extend the syntax understood by `rx-to-string' with named groups and backrefs
 	   (rx-constituents (append '((named-grp . (rxx-process-named-grp 1 nil))
 				      (eval-regexp . (rxx-process-eval-regexp 1 1))
+				      (eval-rxx . (rxx-process-eval-rxx 1 1))
 				      (shy-grp . seq)
 				      (& . seq)
 				      (blanks . "\\(?:[[:blank:]]+\\)")
@@ -833,17 +891,15 @@ For detailed description, see `rxx'.
 	   (regexp
 	    ;; whenever the rx-to-string call below encounters a (named-grp ) construct
 	    ;; in the form, it calls back to rxx-process-named-grp, which will
-	    ;; add a mapping from the group's name to rxx-grp structure
+	    ;; Add a mapping from the group's name to rxx-grp structure
 	    ;; to rxx-name2grp.
 	    (rxx-remove-unneeded-shy-grps
-	     (rxx-replace-posix (rx-to-string form 'no-group))))
-	   (rxx-info (make-rxx-info
-		      :form form :parser (or parser
-					     'identity)
-		      :env rxx-env :descr descr)))
+	     (rxx-replace-posix (rx-to-string (rxx-def-form rxx-def) 'no-group)))))
       (assert (= rxx-num-grps (regexp-opt-depth regexp)))
       (rxx-check-regexp-valid regexp)
-      (make-rxx :regexp regexp :info rxx-info))))
+      (make-rxx-inst :def rxx-def 
+		     :env rxx-env
+		     :regexp regexp))))
 
 (defmacro rxxlet* (bindings &rest forms)
   (list 'let* (mapcar (lambda (binding) (list (first binding)
@@ -853,16 +909,16 @@ For detailed description, see `rxx'.
 
 (defun rxx-add-font-lock-keywords ()
   (when (featurep 'font-lock)
-    (put 'defrxxconst 'doc-string-elt 3)
+    (put 'def-rxx-namespace 'doc-string-elt 3)
     (put 'defrxx 'doc-string-elt 4)
     (put 'defrxxrecurse 'doc-string-elt 5)
     (when (fboundp 'font-lock-add-keywords)
       (font-lock-add-keywords
        nil
-       `((,(rx (seq bow (group (or "defrxx" "defrxxconst" "defrxxcustom" "defrxxstruct"))
-		    (1+ blank) (group (1+ (not space))))) .
+       `((,(rx (seq bow (group (or "def-rxx-namespace" "def-rxx-regexp" "def-rxx-regexps"))
+		    (1+ blank) (group (1+ (not blank))))) .
 		    ((1 font-lock-keyword-face) (2 font-lock-variable-name-face)))
-	 (,(rx (seq bow (group "defrxxrecurse") (1+ blank) (1+ digit) (1+ blank) (group (1+ (not space))))) .
+	 (,(rx (seq bow (group "defrxxrecurse") (1+ blank) (1+ digit) (1+ blank) (group (1+ (not blank))))) .
 	  ((1 font-lock-keyword-face) (2 font-lock-variable-name-face))))))))
 
 (add-hook 'emacs-lisp-mode-hook 'rxx-add-font-lock-keywords)
@@ -884,9 +940,9 @@ the parsed result in case of match, or nil in case of mismatch."
   
   (unless s (error "rxx-parse: nil string"))
   (save-match-data
-    (let* ((rxx-info (or (get-rxx-info aregexp) (error "Need annotated regexp returned by `rxx'; got `%s'" aregexp)))
+    (let* ((rxx-inst (or (get-rxx-inst aregexp) (error "Need annotated regexp returned by `rxx'; got `%s'" aregexp)))
 	   (error-msg (format "Error parsing \`%s\' as %s" s
-			      (or (rxx-info-descr rxx-info) (rxx-info-form rxx-info)))))
+			      (or (rxx-inst-descr rxx-inst) (rxx-inst-form rxx-inst)))))
       
       ;; so, what you need here is just:
       ;;   -- if full match, then parse and be done.
@@ -894,7 +950,7 @@ the parsed result in case of match, or nil in case of mismatch."
       ;; if partial match ok, longer partial match is generally better.
       ;; so, possibly, match each string.  (or only when rxx-longest-match-p is true?)
       
-      (if (not (string-match (rxx-regexp aregexp) s))
+      (if (not (string-match (rxx-inst-regexp aregexp) s))
 	  (unless error-ok (error "%s: No match" error-msg))
 	(let (no-parse)
 	  (unless partial-match-ok
@@ -903,9 +959,9 @@ the parsed result in case of match, or nil in case of mismatch."
 	    (unless (= (match-end 0) (length s))
 	      (if error-ok (setq no-parse t) (error "%s: match ends at %d" error-msg (match-end 0)))))
 	  (unless no-parse
-	    (let* ((rxx-env (rxx-info-env rxx-info))
+	    (let* ((rxx-env (rxx-inst-env rxx-inst))
 		   (rxx-object s))
-	      (rxx-call-parser rxx-info (match-string 0 s)))))))))
+	      (rxx-call-parser rxx-inst (match-string 0 s)))))))))
 
 (defun* rxx-search-fwd (aregexp &optional bound noerror (partial-match-ok t))
   "Match the current buffer against the given extended regexp, and return
@@ -914,19 +970,19 @@ the parsed result in case of match, or nil in case of mismatch."
   ;;   - work with re-search-forward and re-search-bwd.
   ;;
       (let* ((old-point (point))
-	     (rxx-info (or (get-rxx-info aregexp) (error "Need annotated regexp returned by `rxx'; got `%s'" aregexp)))
+	     (rxx-inst (or (get-rxx-inst aregexp) (error "Need annotated regexp returned by `rxx'; got `%s'" aregexp)))
 	     (error-msg (format "Error parsing \`%s\' as %s"
 				(if (and bound (>= bound old-point) (< (- bound old-point) 100))
 				    (buffer-substring old-point bound)
-				  "buffer text") (rxx-info-form rxx-info))))
-	(if (not (re-search-forward (rxx-regexp aregexp) bound 'noerror))
+				  "buffer text") (rxx-inst-form rxx-inst))))
+	(if (not (re-search-forward (rxx-inst-regexp aregexp) bound 'noerror))
 	    (unless noerror (error "%s" error-msg))
 	  (unless (or noerror partial-match-ok)
 	    (unless (= (match-beginning 0) old-point) (error "%s: match starts at %d" error-msg (match-beginning 0)))
 	    (unless (= (match-end 0) bound) (error "%s: match ends at %d" error-msg (match-end 0))))
-	  (let* ((rxx-env (rxx-info-env rxx-info))
+	  (let* ((rxx-env (rxx-inst-env rxx-inst))
 		 rxx-object)
-	    (rxx-call-parser rxx-info (match-string 0))))))
+	    (rxx-call-parser rxx-inst (match-string 0))))))
 
 (defun* rxx-search-bwd (aregexp &optional bound noerror (partial-match-ok t))
   "Match the current buffer against the given aregexp, and return
@@ -936,19 +992,19 @@ the parsed result in case of match, or nil in case of mismatch."
   ;;   - and with posix searches
   ;;
       (let* ((old-point (point))
-	    (rxx-info (or (get-rxx-info aregexp) (error "Need annotated regexp returned by `rxx'; got `%s'" aregexp)))
+	    (rxx-inst (or (get-rxx-inst aregexp) (error "Need annotated regexp returned by `rxx'; got `%s'" aregexp)))
 	    (error-msg (format "Error parsing \`%s\' as %s"
 			       (if (and bound (>= bound old-point) (< (- bound old-point) 100))
 				   (buffer-substring old-point bound)
 				 "buffer text") aregexp)))
-	(if (not (re-search-backward (rxx-regexp aregexp) bound 'noerror))
+	(if (not (re-search-backward (rxx-inst-regexp aregexp) bound 'noerror))
 	    (unless noerror (error "%s" error-msg))
 	  (unless (or noerror partial-match-ok)
 	    (unless (= (match-beginning 0) old-point) (error "%s: match starts at %d" error-msg (match-beginning 0)))
 	    (unless (= (match-end 0) bound) (error "%s: match ends at %d" error-msg (match-end 0))))
-	  (let* ((rxx-env (rxx-info-env rxx-info))
+	  (let* ((rxx-env (rxx-inst-env rxx-inst))
 		 rxx-object)
-	    (rxx-call-parser rxx-info (match-string 0))))))
+	    (rxx-call-parser rxx-inst (match-string 0))))))
 
 (defmacro rxx-do-search-fwd (namespace symbol var &rest forms)
   "Searches forward from point for matches to rxx AREGEXP, and evalutes FORMS
@@ -990,19 +1046,19 @@ the parsed result in case of match, or nil in case of mismatch."
   ;;
   (elu-save match-data excursion
     (let ((old-point (point))
-	  (rxx-info (or (get-rxx-info aregexp)
+	  (rxx-inst (or (get-rxx-inst aregexp)
 			(error "Need annotated regexp returned by `rxx'; got `%s'" aregexp))))
-      (if (and (re-search-backward (rxx-regexp aregexp) bound 'noerror)
+      (if (and (re-search-backward (rxx-inst regexp aregexp) bound 'noerror)
 	       (or partial-match-ok
 		   (and (= (match-beginning 0) bound)
 			(= (match-end 0) old-point))))
-	  (let* ((rxx-env (rxx-info-env rxx-info))
+	  (let* ((rxx-env (rxx-inst-env rxx-inst))
 		 rxx-object)
-	    (rxx-call-parser rxx-info (match-string 0)))
+	    (rxx-call-parser rxx-inst (match-string 0)))
 	(error "Error parsing \`%s\' as %s" (if (and bound (>= bound old-point) (< (- bound old-point) 100))
 						(buffer-substring old-point bound)
 					      "buffer text")
-	       (or (rxx-info-descr rxx-info) (rxx-info-form rxx-info)))))))
+	       (or (rxx-inst-descr rxx-inst) (rxx-inst-form rxx-inst)))))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1017,7 +1073,7 @@ Fields:
 "
   loc text)
 
-(defun rxx-kill-local-vars ()
+(defun rxx-reset ()
   "Kill local rxx vars"
   (interactive)
   (let (vars-killed)

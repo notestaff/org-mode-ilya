@@ -91,7 +91,7 @@
 
 *** Replacing named subgroups
 
-	 So in this way, 
+	 So in this way, you can use things as subroutines.
 
 *** Matching lists
 

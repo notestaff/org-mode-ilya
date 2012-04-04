@@ -320,22 +320,6 @@ changing only the numerator."
 			  (elu-valu-unit new-num))
      :denom new-denom)))
 
-(defconst elu-valu-parse-test-defs
-  '((number "three" 3)
-    (number "3." 3)
-    (number "3.3737" 3.3737)
-    (number ".012340" 0.01234)
-    (number "1e-5" 1e-5)
-    (number "1.35e5" 1.35e5)
-    (valu "$10.37" [cl-struct-elu-valu 10.37 $])
-    (valu "33" [cl-struct-elu-valu 33 item])
-    (valu "33 items" [cl-struct-elu-valu 33 items])
-    (valu "item" [cl-struct-elu-valu 1 item])
-    (valu "0" [cl-struct-elu-valu 0 item])
-    (valu "week" [cl-struct-elu-valu 1 week])
-    (valu-range "2-3 weeks" ([cl-struct-elu-valu 2 weeks] . [cl-struct-elu-valu 3 weeks]))
-    (valu-range "2-3" ([cl-struct-elu-valu 2 item] . [cl-struct-elu-valu 3 item]))))
-
 
 (provide 'elu-valu)
 

@@ -52,11 +52,24 @@
 ; so the binding is as late as possible.
 ; and, 
 
-(def-rxx org priority-char "A priority character.  Parsed as the priority char."
-   (eval-regexp (format "[%c-%c]" org-highest-priority org-lowest-priority)))
+(def-rxx-regexps org
+  (priority-char "A priority character.  Parsed as the priority char."
+		 (eval-regexp (format "[%c-%c]" org-highest-priority org-lowest-priority)))
 
-(def-rxx org priority-cookie "A priority cookie.  Parsed as the priority char."
-  (seq "[#" priority-char "]") priority-char)
+  (priority-cookie "A priority cookie.  Parsed as the priority char."
+		   (seq "[#" priority-char "]") priority-char)
+
+
+  (matcher "A tags-and-properties matcher.  Parses as the corresponding form."
+  (seq tags-and-props-matcher? (opt "/" todo-matcher))
+  `(and ,tags-and-props-matcher ,todo-matcher))
+
+  (tags-and-props-matcher "Tags and properties matcher."
+			  (1+ alnum))
+
+  (todo-matcher "Todo matcher."
+		(1+ alnum))
+  )
 
 ;; so, one solution is to have the module explicitly define a const containing the exported regexps.
 ;; that's not such a bad solution, and is what i had before.
@@ -103,18 +116,6 @@
 
 ;; 
 
-
-
-
-(def-rxx org matcher "A tags-and-properties matcher.  Parses as the corresponding form."
-  (seq tags-and-props-matcher? (opt "/" todo-matcher))
-  `(and ,tags-and-props-matcher ,todo-matcher))
-
-(def-rxx org tags-and-props-matcher "Tags and properties matcher."
-	(1+ alnum))
-
-(def-rxx org todo-matcher "Todo matcher."
-	(1+ alnum))
 
 (rxx-parse-string org matcher "privet/lunatikam")
 	
