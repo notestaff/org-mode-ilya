@@ -55,8 +55,8 @@
 ;;;;;;;;;;;;;;;
 
 (def-rxx-namespace elu-valu
-  "Values with units"
-  :exports (number number-range valu valu-range ratio-word valu-ratio))
+  "Values with units")
+
 
 (defun elu-valu-do-sum (start-value seq)
   "Sum a sequence SEQ of valus, starting with START-VALUE."

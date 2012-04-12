@@ -5,7 +5,6 @@
 (def-rxx-namespace org
   "Org mode expressions"
   :imports elu-valu
-  :exports (priority-char priority-cookie)
   )
 
 ;; should this be def-rxx-regexp instead?
@@ -53,13 +52,46 @@
 ; and, 
 
 (def-rxx-regexps org
+
+  (headline "A headline"
+	    (seq bol (sep-by blanks stars todo? priority-cookie? headline-text? stats-cookie? tags?) eol)
+	    (list stars priority-cookie todo (elu-trim-whitespace headline-text)
+		  stats-cookie tags))
+
+  (stars "The initial stars of an Org headline.  Parses as the level."
+	 (seq bol (sep-by (eval (if org-odd-levels-only "*" ""))
+		    (1+ (named-grp star "*")))) (length star-list))
+
+  ;  ((one-of str-list) "one of a list of strings"
+  ;    (seq bow (named-grp the-todo (eval-rxx (cons (quote or) str-list))) eow)
+  ; (todo "the todo keyword" (named-grp todo-kw (one-of org-todo-keywords-1)))
+
+  ;(todo "The todo keyword" (seq bow (named-grp the-todo (eval-rxx (cons (quote or) todo-keywords))) eow) the-todo
+  ;   (todo-keywords (elu-when-bound todo-keywords )
+  ;
+  (todo "The todo keyword" (seq bow (named-grp the-todo (eval-rxx (cons 'or org-todo-keywords-1))) eow) the-todo)
+  
   (priority-char "A priority character.  Parsed as the priority char."
-		 (eval-regexp (format "[%c-%c]" org-highest-priority org-lowest-priority)))
+		 (eval-regexp (format "[%c-%c]" org-highest-priority org-lowest-priority))
+		 string-to-char)
 
   (priority-cookie "A priority cookie.  Parsed as the priority char."
 		   (seq "[#" priority-char "]") priority-char)
 
+  (tag "Tag name, parses as tag name" (1+ (any alnum "_@#%")))
+  (tags "List of tags.  Parses as list of tags."  (& blanks? (opt ":" (1+ (& tag ":")) eol)) tag-list)
 
+  (headline-text "Headline text" (minimal-match (1+ nonl)))
+
+  (int "an integer.  parses as its value." (1+ digit) string-to-number)
+  (int-ratio "a ratio.  parses as a floating-point value of the ratio." (seq (int numer) "/" (int denom)) (/ (float numer) (float denom)))
+
+  (percentage "a percentage.  parses as a floating-point value of the percentage."
+	      (seq int "%") (/ (float int) 100.0)) 
+  
+  (stats-cookie "statistics cookie" (seq "[" (or (int-ratio val) (percentage val)) "]") val)
+
+  
   (matcher "A tags-and-properties matcher.  Parses as the corresponding form."
   (seq tags-and-props-matcher? (opt "/" todo-matcher))
   `(and ,tags-and-props-matcher ,todo-matcher))
@@ -116,6 +148,50 @@
 
 ;; 
 
+(defconst rxx-org-test-defs
+  '(
+    (stars ((org-odd-levels-only t)) "***" 2)
+    (stars ((org-odd-levels-only nil)) "***" 3)
+    (stars ((org-odd-levels-only t)) "****" (rxx-parse-error "Error parsing `****' as `The initial stars of an Org headline.  Parses as the level.': match ends at 3"))
+    (todo ((org-todo-keywords-1 ("TODO" "DONE"))) "TODO" str)
+    (headline ((org-todo-keywords-1 ("TODO" "DONE")))
+	      "* Vsem privet"
+	      (1 nil nil "Vsem privet" nil nil))
+    (headline ((org-todo-keywords-1 ("TODO" "DONE")))
+	      "*** TODO [#A] Vsem privet   :new:work:"
+	      (2 ?A "TODO" "Vsem privet"  nil ("new" "work")))
+    (int-ratio nil "3/4" .75)
+    (percentage nil "33%" .33)
+    (headline ((org-todo-keywords-1 ("TODO" "DONE")))
+	      "*** TODO [#A] Vsem privet [2/4]   :new:work:"
+	      (2 ?A "TODO" "Vsem privet"  .5 ("new" "work")))
+    (headline ((org-todo-keywords-1 ("TODO" "DONE")))
+	      "*** TODO [#A] Vsem privet [75%]   :new:work:"
+	      (2 ?A "TODO" "Vsem privet"  .75 ("new" "work")))
+    ))
 
-(rxx-parse-string org matcher "privet/lunatikam")
-	
+(defun rxx-org-tests ()
+  (interactive)
+  ;; TODO add code to run this on actual org files.  maybe compare results with the new parser.
+  (rxx-reset)
+  (let ((num-ok 0))
+    (dolist (test-def rxx-org-test-defs)
+      (destructuring-bind (name var-settings str expected-result) test-def
+	(message "testing test %s" test-def)
+	(let ((expected-result (if (eq expected-result 'str) str expected-result))
+	      (cur-result
+	       (progv (mapcar 'car var-settings) (mapcar 'cadr var-settings)
+		 (rxx-reset)
+		 (condition-case err
+		     (rxx-parse-string-func 'org name str)
+		   (rxx-parse-error err)))))
+	  (if (equal cur-result expected-result)
+	      (incf num-ok)
+	    (message "\n----------\n\nexp=%s\ncur=%s\n---------\n" expected-result cur-result)
+	    (error "rxx org test failed: test=%s got=%s"
+		   test-def cur-result)))))
+    (message "%s tests passed" num-ok)))
+
+(rxx-org-tests)
+
+;(rxx-parse-string org matcher "privet/lunatikam")

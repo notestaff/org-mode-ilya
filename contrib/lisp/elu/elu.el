@@ -26,7 +26,7 @@
 ;;
 ;;; Commentary:
 ;;
-;; General-purpose emacs utilities.  Also includes some functions present
+;; General-purpose Emacs utilities.  Also includes some functions present
 ;; in GNU Emacs but not XEmacs; putting them into the elu namespace
 ;; helps write portable code.
 ;; Also, includes some functions taken from the CL package, but
@@ -36,12 +36,16 @@
 ;;
 ;; See also: `elu-test.el'.
 
+(require 'rx)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
 ;; Section: Customizations 
 ;;
 ;; Customizations for the elu library
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; Code:
 
 (defgroup elu nil
   "General-purpose Emacs Lisp utilities"
@@ -74,8 +78,7 @@ Used for iterating over arguments that can be a list or a singleton value."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defun elu-remove-if (predicate seq)
-  "Return a new sequence containing elements of SEQ that do not satisfy
-PREDICATE."
+  "Return a new sequence containing elements of SEQ that do not satisfy PREDICATE."
   (let (result)
     (dolist (e seq)
       (unless (funcall predicate e)
@@ -395,7 +398,8 @@ remaining fields taking values from STRUCT.   CLAUSES has the form :field1 val1 
 (defun elu-trim-whitespace (s)
   "Trim trailing and leading whitespace from string"
   (save-match-data
-    (replace-regexp-in-string "\\(\\`\\s-*\\\\)|\\(*\\'\\)"
+    (replace-regexp-in-string (rx (group (or (seq bos (1+ space))
+					     (seq (1+ space) eos))))
      "" (if (symbolp s) (symbol-name s) s))))
 
 (defun elu-not-blank (s)
@@ -607,13 +611,13 @@ Also, lets you use a function symbol for the replacement function definition."
 	      bindings))
        ,@body)))
 
-(defmacro elu-when-bound (x)
-  "If the symbol X is bound then return the value of X, else return nil."
-  `(when (boundp (quote ,x)) ,x))
+(defmacro elu-when-bound (x &optional dflt)
+  "If the symbol X is bound then return the value of X, else return DFLT."
+  `(if (boundp (quote ,x)) ,x ,dflt))
 
-(defmacro elu-when-bound-func (x)
-  "If the symbol X is bound then return the value of X, else return nil."
-  (when (boundp x) x))
+(defmacro elu-when-bound-func (x &optional dflt)
+  "If the symbol X is bound then return the value of X, else return DFLT."
+  (if (boundp x) x dflt))
 
 (defun elu-assoc-val (key alist &optional error-message)
   "Looks up KEY in association list ALIST.  Unlike `assoc', returns the associated value rather than the associated pair.

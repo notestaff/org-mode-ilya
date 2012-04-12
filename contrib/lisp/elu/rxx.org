@@ -1,48 +1,38 @@
-#+TITLE:      rxx library for constructing elisp parsers from regexps
+#+TITLE:      rxx library for constructing simple parsers in elisp using regexps
 #+AUTHOR:     Ilya Shlyakhter
 #+EMAIL:      ilya_shl AT alum DOT mit DOT edu
 
 
 * Introduction
 
-  =rxx= is an Emacs Lisp library that greatly simplifies the writing and processing of complex regular expressions.
-  It builds on the =rx= library included with Emacs, but adds features that let you define regexps as reusable
-  abstractions that can be used as building blocks in larger regexps.  Here is an example:
+  =rxx= is an Emacs Lisp library that helps you define and parse complex regexps.  You define a regexp as a
+  reusable abstraction, giving it a name and attaching a parser.  The parser takes a match to the regexp
+  (including matches to any subgroups) and constructs a programmatic ("parsed") representation of the result.
+  Subgroups of the regexp are given names and the parser refers to subgroup matches by name.
+  
+  You can then use this regexp as a building block (a subgroup) when defining more complex regexps.
 
-#+BEGIN_SRC emacs-lisp :session :exports both
-    (require 'rxx)
-    (rxx-reset)
-  
-    (def-rxx-namespace arith "Parsing of numbers")
+  Here is an example:
+
+#+BEGIN_SRC emacs-lisp :session :exports both :results value
+  (require 'rxx)
+  (eval-when-compile (require 'cl))
+  (rxx-reset)
     
-    (def-rxx
-      arith   ; in rxx namespace arith
-      number  ; define a regexp named number
-      "A number.  Parses as its value."
-      (1+ digit)  ; matching the following symbolic regexp
-      string-to-number  ; parsed by calling this function on the entire matched string
-      )
+  (def-rxx-namespace arith "Parsing of numbers")
   
-    (rxx-parse-string arith number "239")
+  (def-rxx-regexps arith
+    (number "A number.  Parses as its value"  (1+ digit) string-to-number)
+    (number-range "A range of numbers.  Parses as (beg . end)" (seq (number beg) "-" (number end))  (cons beg end)))
+    
+  (assert (= (rxx-parse-string arith number "239") 239))
+  (assert (equal (rxx-parse-string arith number-range "20-30") '(20 . 30)))
 #+END_SRC  
 
 #+RESULTS:
-: 239
 
-  Now use =number= as a building block in a more complex regexp, =number-range=:
-
-#+BEGIN_SRC emacs-lisp :session :exports both
-  (def-rxx arith number-range "A pair of numbers.  Parses as their cons."
-    (seq (number beg) "-" (number end))
-    (cons beg end))
-  
-  (rxx-parse-string arith number-range "2-3")
-#+END_SRC
-
-#+RESULTS:
-: (2 . 3)
-
-  Note that the definition of =number-range= includes two sub-expressions of type =number=,
+  Note that we use =number= as a building block in a more complex regexp, =number-range=.
+  The definition of =number-range= includes two sub-expressions of type =number=,
   one named =beg= and one named =end=.  In the parser expression for =number-range=,
   =beg= is bound to the result of parsing the first number with =number='s parser
   (=string-to=number=), while =end= is bound to the result of parsing the second number.
@@ -50,31 +40,31 @@
   Forward references are allowed: you can reference named regexps as long as they have been
   defined by the time the parsing code actually gets invoked.  See more details in the section
   on late binding.
-  
 
 *** Named subgroups
 
-	 In standard regexps, to refer to a subgroup of a match you use numbers:
-	 the =n='th parenthetic subgroup.  This is both hard to read, and error-prone:
+	 In standard regexps, to refer to a subgroup of a match you use numeric ids:
+	 =(match-string n)= returns the text matched by the =n='th parenthetic subgroup.
+	 This is both hard to read, and error-prone:
 	 if a new parenthetic subgroup is inserted early in the regexp, the numbers
-	 of all subsequent groups change.
+	 of all subsequent groups change.  Moreover, the group numbers are hard-coded
+	 into the parser, so a parser written to parse the first match to =number= cannot
+	 be used to parse the second match within a larger regexp.
 
-	 =rxx= lets you have name subgroups of your expression, and refer to them by name
+	 =rxx= lets you name the subgroups of your expression, and refer to them by name
 	 in the parser.  We have already seen how this is done when the subgroup matches
 	 another named regexp.  You can also create your own subgroups:
 
 #+BEGIN_SRC emacs-lisp :session :exports both
 
-    (def-rxx arith signed-number "A number with an optional sign"
+    (def-rxx-regexp arith signed-number "A number with an optional sign"
        (seq (opt (named-grp sign (or "-" "+"))) (number a))
        (cons sign a))
 
-    (rxx-parse-string arith signed-number "-3")
-
+    (assert (equal (rxx-parse-string arith signed-number "-3") '("-" . 3)))
 #+END_SRC	 
 
 #+RESULTS:
-: (- . 3)
 
 ***** Useful shorthands
 
@@ -89,35 +79,46 @@
 		You can make the subgroup optional by adding a question mark at the end, as in =number?=.
 		This is equivalent to writing =(opt (named-grp number number))=.
 
-*** Replacing named subgroups
-
-	 So in this way, you can use things as subroutines.
-
 *** Matching lists
 
+	 If a named group =G= falls inside a repeat expression, the parser sees the list of parsed matches to =G=
+	 as the variable =G-list=:
+
+#+BEGIN_SRC emacs-lisp :session
+  (def-rxx-regexp arith num-list "List of numbers" (1+ number space) number-list)
+  (assert (equal (rxx-parse-string arith num-list "1 2 3 ") '(1 2 3)))
+#+END_SRC	 
+
+#+RESULTS:
 
 *** Matching bounded recursion
 
-	 So this does seem to work, but with posix .
-	 So, when recursion is detected, bind rxx-posix?  unless overridden by smth outside.
+	 You can use bounded recursion in your regexps by using the =(recurse ...)= operator.
+	 The recursion depth is specified by binding =rxx-recurs-depth=.
 
-#+BEGIN_SRC emacs-lisp
-  
-  (def-rxx arith op "an operator" (or "+" "-" "*" "/") intern)
-  (def-rxx arith binary-expr "a binary expression" (seq (recurse (expr a)) op (recurse (expr b))) (list op a b))
-  (def-rxx arith paren-expr "parenthesized expr" (seq "(" (recurse expr) ")") expr)
-  (def-rxx arith expr "an expression" 
-    (or number binary-expr paren-expr) (cond (number number) (binary-expr binary-expr) (paren-expr paren-expr)))
-  
-  (message "%s"
-  (let ((rxx-recurs-depth 2) (rxx-posix t))
-    (rxx-reset)
-    (rxx-parse-string arith expr "3+5" :posix-matching t)))
-  ; arith-expr-rxx-def-local
-  
-  
+#+BEGIN_SRC emacs-lisp :session
+    
+    (def-rxx-regexps arith
+      (op "an operator" (or "+" "-" "*" "/") intern)
+      (binary-expr "a binary expression" (seq (expr a) op (expr b)) (funcall op a b))
+      (paren-expr "parenthesized expr" (seq "(" expr ")") expr)
+      (expr "an expression" 
+            (or number binary-expr paren-expr) (or number binary-expr paren-expr)))
+    
+    (assert
+     (equal
+      (let ((rxx-recurs-depth 2) (rxx-posix t) (max-lisp-eval-depth 4000))
+        (rxx-reset)
+        (rxx-parse-string arith expr "3+5"))
+      8))
   
 #+END_SRC
+
+#+RESULTS:
+
+*** Replacing named subgroups
+
+	 So in this way, you can use things as subroutines.
 
 *** expression attributes
 
@@ -125,7 +126,8 @@
 	 force-posix, force-non-posix matching
 
 	 (if not forced, use what is scoped in from the outside).
-	 
+
+	 max-recurs-depth?
 
 *** Calling the regexp parsing routines
 
@@ -139,7 +141,8 @@
 	 
 *** Implementation details
 
-
+***** how definitions and instantiations are bound
+		
 *** Other points to make
 
 	 Order
